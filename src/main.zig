@@ -591,7 +591,8 @@ const Context = struct {
                 size = c.types.items[inner_id].size;
             }
 
-            dimension *= c.types.items[inner_id].dimension;
+            // TODO(radomski): check if needed
+            // dimension *= c.types.items[inner_id].dimension;
             ptr_count += c.types.items[inner_id].ptr_count;
         }
 
