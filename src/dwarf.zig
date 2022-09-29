@@ -1,0 +1,842 @@
+const Buffer = @import("main.zig").Buffer;
+const Range = @import("main.zig").Range;
+const std = @import("std");
+
+pub const DW_TAG = enum(u16) {
+    padding = 0x00,
+    array_type = 0x01,
+    class_type = 0x02,
+    entry_point = 0x03,
+    enumeration_type = 0x04,
+    formal_parameter = 0x05,
+    imported_declaration = 0x08,
+    label = 0x0a,
+    lexical_block = 0x0b,
+    member = 0x0d,
+    pointer_type = 0x0f,
+    reference_type = 0x10,
+    compile_unit = 0x11,
+    string_type = 0x12,
+    structure_type = 0x13,
+    subroutine_type = 0x15,
+    typedef = 0x16,
+    union_type = 0x17,
+    unspecified_parameters = 0x18,
+    variant = 0x19,
+    common_block = 0x1a,
+    common_inclusion = 0x1b,
+    inheritance = 0x1c,
+    inlined_subroutine = 0x1d,
+    module = 0x1e,
+    ptr_to_member_type = 0x1f,
+    set_type = 0x20,
+    subrange_type = 0x21,
+    with_stmt = 0x22,
+    access_declaration = 0x23,
+    base_type = 0x24,
+    catch_block = 0x25,
+    const_type = 0x26,
+    constant = 0x27,
+    enumerator = 0x28,
+    file_type = 0x29,
+    friend = 0x2a,
+    namelist = 0x2b,
+    namelist_item = 0x2c,
+    packed_type = 0x2d,
+    subprogram = 0x2e,
+    template_type_param = 0x2f,
+    template_value_param = 0x30,
+    thrown_type = 0x31,
+    try_block = 0x32,
+    variant_part = 0x33,
+    variable = 0x34,
+    volatile_type = 0x35,
+    dwarf_procedure = 0x36,
+    restrict_type = 0x37,
+    interface_type = 0x38,
+    namespace = 0x39,
+    imported_module = 0x3a,
+    unspecified_type = 0x3b,
+    partial_unit = 0x3c,
+    imported_unit = 0x3d,
+    mutable_type = 0x3e,
+    condition = 0x3f,
+    shared_type = 0x40,
+    type_unit = 0x41,
+    rvalue_reference_type = 0x42,
+    template_alias = 0x43,
+    coarray_type = 0x44,
+    generic_subrange = 0x45,
+    dynamic_type = 0x46,
+    atomic_type = 0x47,
+    call_site = 0x48,
+    call_site_parameter = 0x49,
+    skeleton_unit = 0x4a,
+    immutable_type = 0x4b,
+    format_label = 0x4101,
+    function_template = 0x4102,
+    class_template = 0x4103,
+    GNU_BINCL = 0x4104,
+    GNU_EINCL = 0x4105,
+    GNU_template_template_param = 0x4106,
+    GNU_template_parameter_pack = 0x4107,
+    GNU_formal_parameter_pack = 0x4108,
+    GNU_call_site = 0x4109,
+    GNU_call_site_parameter = 0x410a,
+};
+
+pub const DW_AT = enum(u16) {
+    null = 0x00,
+    sibling = 0x01,
+    location = 0x02,
+    name = 0x03,
+    ordering = 0x09,
+    subscr_data = 0x0a,
+    byte_size = 0x0b,
+    bit_offset = 0x0c,
+    bit_size = 0x0d,
+    element_list = 0x0f,
+    stmt_list = 0x10,
+    low_pc = 0x11,
+    high_pc = 0x12,
+    language = 0x13,
+    member = 0x14,
+    discr = 0x15,
+    discr_value = 0x16,
+    visibility = 0x17,
+    import = 0x18,
+    string_length = 0x19,
+    common_reference = 0x1a,
+    comp_dir = 0x1b,
+    const_value = 0x1c,
+    containing_type = 0x1d,
+    default_value = 0x1e,
+    inline_ = 0x20,
+    is_optional = 0x21,
+    lower_bound = 0x22,
+    producer = 0x25,
+    prototyped = 0x27,
+    return_addr = 0x2a,
+    start_scope = 0x2c,
+    stride_size = 0x2e,
+    upper_bound = 0x2f,
+    abstract_origin = 0x31,
+    accessibility = 0x32,
+    address_class = 0x33,
+    artificial = 0x34,
+    base_types = 0x35,
+    calling_convention = 0x36,
+    count = 0x37,
+    data_member_location = 0x38,
+    decl_column = 0x39,
+    decl_file = 0x3a,
+    decl_line = 0x3b,
+    declaration = 0x3c,
+    discr_list = 0x3d,
+    encoding = 0x3e,
+    external = 0x3f,
+    frame_base = 0x40,
+    friend = 0x41,
+    identifier_case = 0x42,
+    macro_info = 0x43,
+    namelist_items = 0x44,
+    priority = 0x45,
+    segment = 0x46,
+    specification = 0x47,
+    static_link = 0x48,
+    type = 0x49,
+    use_location = 0x4a,
+    variable_parameter = 0x4b,
+    virtuality = 0x4c,
+    vtable_elem_location = 0x4d,
+    allocated = 0x4e,
+    associated = 0x4f,
+    data_location = 0x50,
+    byte_stride = 0x51,
+    entry_pc = 0x52,
+    use_UTF8 = 0x53,
+    extension = 0x54,
+    ranges = 0x55,
+    trampoline = 0x56,
+    call_column = 0x57,
+    call_file = 0x58,
+    call_line = 0x59,
+    description = 0x5a,
+    binary_scale = 0x5b,
+    decimal_scale = 0x5c,
+    small = 0x5d,
+    decimal_sign = 0x5e,
+    digit_count = 0x5f,
+    picture_string = 0x60,
+    mutable = 0x61,
+    threads_scaled = 0x62,
+    explicit = 0x63,
+    object_pointer = 0x64,
+    endianity = 0x65,
+    elemental = 0x66,
+    pure = 0x67,
+    recursive = 0x68,
+    signature = 0x69,
+    main_subprogram = 0x6a,
+    data_bit_offset = 0x6b,
+    const_expr = 0x6c,
+    enum_class = 0x6d,
+    linkage_name = 0x6e,
+    string_length_bit_size = 0x6f,
+    string_length_byte_size = 0x70,
+    rank = 0x71,
+    str_offsets_base = 0x72,
+    addr_base = 0x73,
+    rnglists_base = 0x74,
+    dwo_id = 0x75,
+    dwo_name = 0x76,
+    reference = 0x77,
+    rvalue_reference = 0x78,
+    macros = 0x79,
+    call_all_calls = 0x7a,
+    call_all_source_calls = 0x7b,
+    call_all_tail_calls = 0x7c,
+    call_return_pc = 0x7d,
+    call_value = 0x7e,
+    call_origin = 0x7f,
+    call_parameter = 0x80,
+    call_pc = 0x81,
+    call_tail_call = 0x82,
+    call_target = 0x83,
+    call_target_clobbered = 0x84,
+    call_data_location = 0x85,
+    call_data_value = 0x86,
+    noreturn = 0x87,
+    alignment = 0x88,
+    export_symbols = 0x89,
+    deleted = 0x8a,
+    defaulted = 0x8b,
+    loclists_base = 0x8c,
+
+    GNU_vector = 0x2107,
+    GNU_guarded_by = 0x2108,
+    GNU_pt_guarded_by = 0x2109,
+    GNU_guarded = 0x210a,
+    GNU_pt_guarded = 0x210b,
+    GNU_locks_excluded = 0x210c,
+    GNU_exclusive_locks_required = 0x210d,
+    GNU_shared_locks_required = 0x210e,
+    GNU_odr_signature = 0x210f,
+    GNU_template_name = 0x2110,
+    GNU_call_site_value = 0x2111,
+    GNU_call_site_data_value = 0x2112,
+    GNU_call_site_target = 0x2113,
+    GNU_call_site_target_clobbered = 0x2114,
+    GNU_tail_call = 0x2115,
+    GNU_all_tail_call_sites = 0x2116,
+    GNU_all_call_sites = 0x2117,
+    GNU_all_source_call_sites = 0x2118,
+    GNU_macros = 0x2119,
+    GNU_dwo_name = 0x2130,
+    GNU_dwo_id = 0x2131,
+    GNU_ranges_base = 0x2132,
+    GNU_addr_base = 0x2133,
+    GNU_pubnames = 0x2134,
+    GNU_pubtypes = 0x2135,
+    GNU_discriminator = 0x2136,
+    GNU_numerator = 0x2303,
+    GNU_denominator = 0x2304,
+    GNU_bias = 0x2305,
+
+    MIPS_fde = 0x2001,
+    MIPS_loop_begin = 0x2002,
+    MIPS_tail_loop_begin = 0x2003,
+    MIPS_epilog_begin = 0x2004,
+    MIPS_loop_unroll_factor = 0x2005,
+    MIPS_software_pipeline_depth = 0x2006,
+    MIPS_linkage_name = 0x2007,
+    MIPS_stride = 0x2008,
+    MIPS_abstract_name = 0x2009,
+    MIPS_clone_origin = 0x200a,
+    MIPS_has_inlines = 0x200b,
+    MIPS_stride_byte = 0x200c,
+    MIPS_stride_elem = 0x200d,
+    MIPS_ptr_dopetype = 0x200e,
+    MIPS_allocatable_dopetype = 0x200f,
+    MIPS_assumed_shape_dopetype = 0x2010,
+    MIPS_assumed_size = 0x2011,
+};
+
+pub const DW_FORM = enum(u16) {
+    null = 0x00,
+    addr = 0x01,
+    block2 = 0x03,
+    block4 = 0x04,
+    data2 = 0x05,
+    data4 = 0x06,
+    data8 = 0x07,
+    string = 0x08,
+    block = 0x09,
+    block1 = 0x0a,
+    data1 = 0x0b,
+    flag = 0x0c,
+    sdata = 0x0d,
+    strp = 0x0e,
+    udata = 0x0f,
+    ref_addr = 0x10,
+    ref1 = 0x11,
+    ref2 = 0x12,
+    ref4 = 0x13,
+    ref8 = 0x14,
+    ref_udata = 0x15,
+    indirect = 0x16,
+    sec_offset = 0x17,
+    exprloc = 0x18,
+    flag_present = 0x19,
+    strx = 0x1a,
+    addrx = 0x1b,
+    ref_sup4 = 0x1c,
+    strp_sup = 0x1d,
+    data16 = 0x1e,
+    line_strp = 0x1f,
+    ref_sig8 = 0x20,
+    implicit_const = 0x21,
+    loclistx = 0x22,
+    rnglistx = 0x23,
+    ref_sup8 = 0x24,
+    strx1 = 0x25,
+    strx2 = 0x26,
+    strx3 = 0x27,
+    strx4 = 0x28,
+    addrx1 = 0x29,
+    addrx2 = 0x2a,
+    addrx3 = 0x2b,
+    addrx4 = 0x2c,
+};
+
+const AttrId = u32;
+const AttrRange = Range(AttrId);
+const DwarfAttr = struct {
+    at: DW_AT,
+    form: DW_FORM,
+};
+
+const DieId = u32;
+const DieRange = Range(DieId);
+const DwarfDie = struct {
+    has_children: bool,
+    tag: DW_TAG,
+    code: usize,
+    attr_range: AttrRange,
+};
+
+const DwarfCompilationUnitHeader = struct {
+    unit_length: usize,
+    version: u16,
+    debug_abbrev_offset: usize,
+    address_size: u8,
+};
+
+const DwarfCompilationUnit = struct {
+    header: DwarfCompilationUnitHeader,
+    offset: usize,
+    header_size: u8,
+    dwarf_address_size: u8,
+    die_range: DieRange,
+};
+
+const DwarfError = error{
+    EndOfBuffer,
+};
+
+const Self = @This();
+
+attrs: std.ArrayList(DwarfAttr),
+dies: std.ArrayList(DwarfDie),
+cus: std.ArrayList(DwarfCompilationUnit),
+current_cu: DwarfCompilationUnit,
+
+debug_info: Buffer,
+debug_str: Buffer,
+debug_str_offsets: Buffer,
+
+debug_info_address_stack: [8]usize,
+debug_info_address_stack_top: u32,
+
+pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_str_offsets: Buffer, allocator: std.mem.Allocator) !Self {
+    var d = Self{
+        .dies = std.ArrayList(DwarfDie).init(allocator),
+        .attrs = std.ArrayList(DwarfAttr).init(allocator),
+        .cus = std.ArrayList(DwarfCompilationUnit).init(allocator),
+        .current_cu = undefined,
+
+        .debug_info = debug_info,
+        .debug_str = debug_str,
+        .debug_str_offsets = debug_str_offsets,
+
+        .debug_info_address_stack = undefined,
+        .debug_info_address_stack_top = 0,
+    };
+
+    d.pushAddress();
+    while (d.debug_info.isGood()) {
+        const start_pos = d.debug_info.curr_pos;
+
+        var bitness: u8 = 32;
+        const unit_length = blk: {
+            const ul32 = d.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer;
+            if (ul32 == std.math.maxInt(u32)) {
+                bitness = 64;
+                break :blk d.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer;
+            } else {
+                break :blk ul32;
+            }
+        };
+        const unit_length_size = @intCast(u8, d.debug_info.curr_pos - start_pos);
+
+        const version = d.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer;
+        const debug_abbrev_offset = blk: {
+            if (bitness == 32) {
+                break :blk d.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer;
+            } else if (bitness == 64) {
+                break :blk d.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer;
+            } else {
+                unreachable;
+            }
+        };
+        const address_size = d.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer;
+        const header_size = @intCast(u8, d.debug_info.curr_pos - start_pos);
+
+        const cu_header = DwarfCompilationUnitHeader{
+            .unit_length = unit_length,
+            .version = version,
+            .debug_abbrev_offset = debug_abbrev_offset,
+            .address_size = address_size,
+        };
+
+        const cu_offset = d.debug_info.curr_pos;
+        try d.cus.append(DwarfCompilationUnit{
+            .header = cu_header,
+            .offset = cu_offset,
+            .header_size = header_size,
+            .dwarf_address_size = @divExact(bitness, 8),
+            .die_range = undefined,
+        });
+
+        d.debug_info.curr_pos += cu_header.unit_length - (header_size - unit_length_size);
+    }
+    d.popAddress();
+    d.debug_info.advance(@sizeOf(DwarfCompilationUnitHeader));
+
+    var cu_index: usize = 0;
+    var die_start: usize = 0;
+    while (debug_abbrev.isGood()) {
+        if (cu_index + 1 < d.cus.items.len and d.cus.items[cu_index + 1].header.debug_abbrev_offset <= debug_abbrev.curr_pos) {
+            d.cus.items[cu_index].die_range = .{ .start = @intCast(DieId, die_start), .end = @intCast(DieId, d.dies.items.len) };
+            die_start = d.dies.items.len;
+            cu_index += 1;
+        }
+
+        const code = readULEB128(debug_abbrev);
+        if (code == 0) {
+            continue;
+        }
+        const tag = @intToEnum(DW_TAG, readULEB128(debug_abbrev));
+        const children = (debug_abbrev.consume(1) orelse unreachable)[0];
+
+        const start_attr = d.attrs.items.len;
+        while (debug_abbrev.isGood()) {
+            const at = @intToEnum(DW_AT, readULEB128(debug_abbrev));
+            const val = @intToEnum(DW_FORM, readULEB128(debug_abbrev));
+            if (at == DW_AT.null) {
+                break;
+            }
+            try d.attrs.append(DwarfAttr{ .at = at, .form = val });
+        }
+        const end_attr = d.attrs.items.len;
+
+        try d.dies.append(DwarfDie{
+            .code = code,
+            .tag = tag,
+            .attr_range = .{ .start = @intCast(AttrId, start_attr), .end = @intCast(AttrId, end_attr) },
+            .has_children = children == 1,
+        });
+    }
+    d.cus.items[cu_index].die_range = .{ .start = @intCast(DieId, die_start), .end = @intCast(DieId, d.dies.items.len) };
+
+    return d;
+}
+
+pub fn setCu(self: *Self, cu: DwarfCompilationUnit) void {
+    self.current_cu = cu;
+    self.debug_info.curr_pos = cu.offset;
+}
+
+pub fn inCurrentCu(self: *Self) bool {
+    return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.header.unit_length - 7);
+}
+
+pub fn getAttrs(self: *Self, range: AttrRange) []DwarfAttr {
+    return self.attrs.items[range.start..range.end];
+}
+
+pub fn getDies(self: *Self, range: DieRange) []DwarfDie {
+    return self.dies.items[range.start..range.end];
+}
+
+pub fn toGlobalAddr(self: *Self, local_addr: usize) usize {
+    return local_addr + self.current_cu.offset - self.current_cu.header_size;
+}
+
+pub fn skipFormData(self: *Self, form: DW_FORM) void {
+    switch (form) {
+        DW_FORM.null => unreachable,
+        DW_FORM.addr => {
+            // todo
+            const memory_word = self.current_cu.header.address_size;
+            if (memory_word == @sizeOf(u64) or memory_word == @sizeOf(u32)) {
+                self.debug_info.advance(memory_word);
+            } else {
+                unreachable;
+            }
+        },
+        DW_FORM.block2 => {
+            const len = self.debug_info.consumeType(u16) orelse unreachable;
+            self.debug_info.advance(@intCast(u32, len));
+        },
+        DW_FORM.block4 => unreachable,
+        DW_FORM.data2 => {
+            self.debug_info.advance(@sizeOf(u16));
+        },
+        DW_FORM.data4 => {
+            self.debug_info.advance(@sizeOf(u32));
+        },
+        DW_FORM.data8 => {
+            self.debug_info.advance(@sizeOf(u64));
+        },
+        DW_FORM.string => {
+            while (self.debug_info.consume(1)) |c| {
+                if (c[0] == 0) {
+                    break;
+                }
+            }
+        },
+        DW_FORM.block => unreachable,
+        DW_FORM.block1 => {
+            const len = self.debug_info.consumeType(u8) orelse unreachable;
+            _ = self.debug_info.advance(@intCast(u32, len));
+        },
+        DW_FORM.data1 => {
+            self.debug_info.advance(@sizeOf(u8));
+        },
+        DW_FORM.flag => {
+            _ = self.debug_info.advance(1);
+        },
+        DW_FORM.sdata => {
+            _ = readULEB128(&self.debug_info);
+        },
+        DW_FORM.strp => {
+            self.debug_info.advance(self.current_cu.dwarf_address_size);
+        },
+        DW_FORM.udata => {
+            _ = readULEB128(&self.debug_info);
+        },
+        DW_FORM.ref_addr => unreachable,
+        DW_FORM.ref1 => {
+            self.debug_info.advance(@sizeOf(u8));
+        },
+        DW_FORM.ref2 => {
+            self.debug_info.advance(@sizeOf(u16));
+        },
+        DW_FORM.ref4 => {
+            self.debug_info.advance(@sizeOf(u32));
+        },
+        DW_FORM.ref8 => {
+            self.debug_info.advance(@sizeOf(u64));
+        },
+        DW_FORM.ref_udata => unreachable,
+        DW_FORM.indirect => unreachable,
+        DW_FORM.sec_offset => {
+            self.debug_info.advance(self.current_cu.dwarf_address_size);
+        },
+        DW_FORM.exprloc => {
+            const len = readULEB128(&self.debug_info);
+            self.debug_info.advance(@intCast(u32, len));
+        },
+        DW_FORM.flag_present => {},
+        DW_FORM.strx => unreachable,
+        DW_FORM.addrx => {
+            _ = readULEB128(&self.debug_info);
+        },
+        DW_FORM.ref_sup4 => unreachable,
+        DW_FORM.strp_sup => unreachable,
+        DW_FORM.data16 => unreachable,
+        DW_FORM.line_strp => unreachable,
+        DW_FORM.ref_sig8 => unreachable,
+        DW_FORM.implicit_const => unreachable,
+        DW_FORM.loclistx => unreachable,
+        DW_FORM.rnglistx => unreachable,
+        DW_FORM.ref_sup8 => unreachable,
+        DW_FORM.strx1 => {
+            self.debug_info.advance(1);
+        },
+        DW_FORM.strx2 => unreachable,
+        DW_FORM.strx3 => unreachable,
+        DW_FORM.strx4 => unreachable,
+        DW_FORM.addrx1 => unreachable,
+        DW_FORM.addrx2 => unreachable,
+        DW_FORM.addrx3 => unreachable,
+        DW_FORM.addrx4 => unreachable,
+    }
+}
+
+pub fn readFormData(self: *Self, form: DW_FORM) !usize {
+    switch (form) {
+        DW_FORM.null => unreachable,
+        DW_FORM.addr => {
+            // todo
+            if (self.current_cu.header.address_size == @sizeOf(u64)) {
+                return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+            } else if (self.current_cu.header.address_size == @sizeOf(u32)) {
+                return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+            } else {
+                unreachable;
+            }
+        },
+        DW_FORM.block2 => {
+            const len = self.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer;
+            _ = self.debug_info.advance(@intCast(u32, len));
+        },
+        DW_FORM.block4 => unreachable,
+        DW_FORM.data2 => {
+            return @intCast(usize, (self.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.data4 => {
+            return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.data8 => {
+            return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.string => {
+            while (self.debug_info.consume(1)) |c| {
+                if (c[0] == 0) {
+                    break;
+                }
+            }
+        },
+        DW_FORM.block => unreachable,
+        DW_FORM.block1 => {
+            const len = self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer;
+            var slice_data = self.debug_info.consume(@intCast(u32, len)) orelse return DwarfError.EndOfBuffer;
+
+            var data = Buffer{ .data = slice_data };
+            const op = data.consumeType(u8) orelse return DwarfError.EndOfBuffer;
+            if (op == 0x23) {
+                const uleb = readULEB128(&data);
+                std.debug.assert(data.curr_pos == data.data.len);
+                return uleb;
+            } else {
+                unreachable;
+            }
+        },
+        DW_FORM.data1 => {
+            return @intCast(usize, (self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.flag => unreachable,
+        DW_FORM.sdata => {
+            return readULEB128(&self.debug_info);
+        },
+        DW_FORM.strp => {
+            if (self.current_cu.dwarf_address_size == @sizeOf(u64)) {
+                return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+            } else if (self.current_cu.dwarf_address_size == @sizeOf(u32)) {
+                return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+            } else {
+                unreachable;
+            }
+        },
+        DW_FORM.udata => {
+            return readULEB128(&self.debug_info);
+        },
+        DW_FORM.ref_addr => unreachable,
+        DW_FORM.ref1 => {
+            return @intCast(usize, (self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.ref2 => {
+            return @intCast(usize, (self.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.ref4 => {
+            return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.ref8 => {
+            return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.ref_udata => unreachable,
+        DW_FORM.indirect => unreachable,
+        DW_FORM.sec_offset => unreachable,
+        DW_FORM.exprloc => {
+            const len = readULEB128(&self.debug_info);
+            _ = self.debug_info.advance(@intCast(u32, len));
+        },
+        DW_FORM.flag_present => {},
+        DW_FORM.strx => unreachable,
+        DW_FORM.addrx => unreachable,
+        DW_FORM.ref_sup4 => unreachable,
+        DW_FORM.strp_sup => unreachable,
+        DW_FORM.data16 => unreachable,
+        DW_FORM.line_strp => unreachable,
+        DW_FORM.ref_sig8 => unreachable,
+        DW_FORM.implicit_const => unreachable,
+        DW_FORM.loclistx => unreachable,
+        DW_FORM.rnglistx => unreachable,
+        DW_FORM.ref_sup8 => unreachable,
+        DW_FORM.strx1 => {
+            return @intCast(usize, (self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer));
+        },
+        DW_FORM.strx2 => unreachable,
+        DW_FORM.strx3 => unreachable,
+        DW_FORM.strx4 => unreachable,
+        DW_FORM.addrx1 => unreachable,
+        DW_FORM.addrx2 => unreachable,
+        DW_FORM.addrx3 => unreachable,
+        DW_FORM.addrx4 => unreachable,
+    }
+    return 0;
+}
+
+pub fn readString(self: *Self, form: DW_FORM) ![]const u8 {
+    if (form == DW_FORM.strp) {
+        const name_addr = try self.readFormData(form);
+        return self.readOffsetString(name_addr);
+    } else if (form == DW_FORM.string) {
+        return self.readFormString();
+    } else {
+        const offset_index = try self.readFormData(form);
+        return self.readOffsetIndexedString(offset_index);
+    }
+}
+
+pub fn readFormString(self: *Self) ![]const u8 {
+    return self.debug_info.consumeUntil(0) orelse return DwarfError.EndOfBuffer;
+}
+
+pub fn readOffsetString(self: *Self, addr: usize) ![]const u8 {
+    self.debug_str.curr_pos = addr;
+    return self.debug_str.consumeUntil(0) orelse return DwarfError.EndOfBuffer;
+}
+
+pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
+    const header_size = self.current_cu.dwarf_address_size * 2;
+    self.debug_str_offsets.curr_pos = index * self.current_cu.dwarf_address_size + header_size;
+
+    const address = blk: {
+        if (self.current_cu.dwarf_address_size == @sizeOf(u64)) {
+            break :blk @intCast(usize, (self.debug_str_offsets.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+        } else if (self.current_cu.dwarf_address_size == @sizeOf(u32)) {
+            break :blk @intCast(usize, (self.debug_str_offsets.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+        } else {
+            unreachable;
+        }
+    };
+
+    const name = try self.readOffsetString(address);
+    return name;
+}
+
+pub fn readDieAtAddress(self: *Self, addr: usize) !?DwarfDie {
+    self.debug_info.curr_pos = addr + self.current_cu.offset - self.current_cu.header_size;
+
+    while (self.debug_info.isGood()) {
+        const code = readULEB128(&self.debug_info);
+        if (code == 0) {
+            return null;
+        }
+        return self.getDies(self.current_cu.die_range)[code - 1];
+    }
+
+    return DwarfError.EndOfBuffer;
+}
+
+pub fn skipDieAndChildren(self: *Self, die: DwarfDie) !void {
+    self.skipDieAttrs(die);
+    if (die.has_children == true) {
+        while (self.readNextDie()) |addr| {
+            const inner_die = try self.readDieAtAddress(addr) orelse break;
+            try self.skipDieAndChildren(inner_die);
+        }
+    }
+}
+
+pub fn readDieIfTag(self: *Self, tag: DW_TAG) ?DwarfDie {
+    const orig_pos = self.debug_info.curr_pos;
+    while (self.debug_info.isGood()) {
+        const code = readULEB128(&self.debug_info);
+        if (code == 0) {
+            continue;
+        }
+        const die = self.getDies(self.current_cu.die_range)[code - 1];
+        if (die.tag == tag) {
+            return die;
+        } else {
+            break;
+        }
+    }
+
+    self.debug_info.curr_pos = orig_pos;
+    return null;
+}
+
+pub fn readNextDie(self: *Self) ?usize {
+    while (self.debug_info.isGood() and self.inCurrentCu()) {
+        const addr = self.debug_info.curr_pos - self.current_cu.offset + self.current_cu.header_size;
+        return addr;
+    }
+
+    return null;
+}
+
+pub fn skipDieAttrs(self: *Self, die: DwarfDie) void {
+    for (self.getAttrs(die.attr_range)) |attr| {
+        self.skipFormData(attr.form);
+    }
+}
+
+pub fn pushAddress(self: *Self) void {
+    if (self.debug_info_address_stack_top >= self.debug_info_address_stack.len) {
+        unreachable;
+    }
+
+    self.debug_info_address_stack[self.debug_info_address_stack_top] = self.debug_info.curr_pos;
+    self.debug_info_address_stack_top += 1;
+}
+
+pub fn popAddress(self: *Self) void {
+    if (self.debug_info_address_stack_top <= 0) {
+        unreachable;
+    }
+
+    self.debug_info_address_stack_top -= 1;
+    self.debug_info.curr_pos = self.debug_info_address_stack[self.debug_info_address_stack_top];
+}
+
+pub fn readULEB128(b: *Buffer) usize {
+    var result: usize = 0;
+
+    // TODO(radomski): @Speed
+    if (b.consumeType(u8)) |v| {
+        result = @intCast(usize, v & 0x7f);
+        if ((v & 0x80) == 0) {
+            return result;
+        }
+    }
+
+    var i: usize = 1;
+    // var i: usize = 0;
+    while (b.consume(1)) |bytes| {
+        const byte = bytes[0];
+
+        result = result | (@intCast(usize, byte & 0x7f) << @intCast(u6, i * 7));
+        if ((byte & 0x80) == 0) {
+            break;
+        }
+
+        i += 1;
+    }
+
+    return result;
+}
