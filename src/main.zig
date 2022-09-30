@@ -1,5 +1,6 @@
 const std = @import("std");
 const fmt = std.fmt;
+const time = std.time;
 const Dwarf = @import("dwarf.zig");
 
 const KiloByte = 1024;
@@ -375,7 +376,9 @@ const Context = struct {
                 }
             }
             const ns = timer.read();
-            std.debug.print("Parsing: {}\n", .{std.fmt.fmtDuration(ns)});
+            const elapsed_s = @intToFloat(f64, ns) / time.ns_per_s;
+            const throughput = @floatToInt(u64, @intToFloat(f64, c.dwarf.debug_info.data.len) / elapsed_s);
+            std.debug.print("Parsing: {}[{}/s]\n", .{ std.fmt.fmtDuration(ns), std.fmt.fmtIntSizeDec(throughput) });
         }
 
         {
