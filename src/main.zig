@@ -245,6 +245,33 @@ const ContainerType = enum(u8) {
     }
 };
 
+pub fn Stack(comptime T: type) type {
+    return struct {
+        mem: []T,
+        top: u16 = 0,
+        const Self = @This();
+
+        pub fn init(capacity: u16, gpa: std.mem.Allocator) !Self {
+            return Self{
+                .mem = try gpa.alloc(T, capacity),
+            };
+        }
+
+        pub fn push(s: *Self, obj: T) void {
+            s.mem[s.top] = obj;
+            s.top += 1;
+        }
+
+        pub fn popTo(s: *Self, n: u16) void {
+            s.top = n;
+        }
+
+        pub fn sliceFrom(s: *Self, n: u16) []T {
+            return s.mem[n..s.top];
+        }
+    };
+}
+
 const Context = struct {
     const Self = @This();
 
@@ -261,6 +288,10 @@ const Context = struct {
 
     gpa: std.mem.Allocator,
 
+    member_scratch_stack: Stack(StructMember),
+    structure_scratch_stack: Stack(Structure),
+    union_scratch_stack: Stack(Structure),
+
     pub fn init(allocator: std.mem.Allocator, dwarf: Dwarf) !Self {
         var c = Context{
             .types = std.ArrayList(Type).init(allocator),
@@ -274,6 +305,10 @@ const Context = struct {
             .members = std.ArrayList(StructMember).init(allocator),
             .dwarf = dwarf,
             .gpa = allocator,
+
+            .member_scratch_stack = try Stack(StructMember).init(16 * 1024, allocator),
+            .structure_scratch_stack = try Stack(Structure).init(4 * 1024, allocator),
+            .union_scratch_stack = try Stack(Structure).init(4 * 1024, allocator),
         };
 
         return c;
@@ -368,16 +403,12 @@ const Context = struct {
         var structure = std.mem.zeroes(Structure);
         structure.type_id = try c.readTypeAtAddress(die_addr);
 
-        var arena_instance = std.heap.ArenaAllocator.init(c.gpa);
-        defer arena_instance.deinit();
-        const arena = arena_instance.allocator();
-
-        var member_stack = std.ArrayList(StructMember).init(arena);
-        defer member_stack.deinit();
-        var structure_stack = std.ArrayList(Structure).init(arena);
-        defer structure_stack.deinit();
-        var union_stack = std.ArrayList(Structure).init(arena);
-        defer union_stack.deinit();
+        const member_top_start = c.member_scratch_stack.top;
+        defer c.member_scratch_stack.popTo(member_top_start);
+        const structure_top_start = c.structure_scratch_stack.top;
+        defer c.structure_scratch_stack.popTo(structure_top_start);
+        const union_top_start = c.union_scratch_stack.top;
+        defer c.union_scratch_stack.popTo(union_top_start);
 
         while (c.dwarf.readNextDie()) |child_die_addr| {
             const die_opt = try c.dwarf.readDieAtAddress(child_die_addr);
@@ -413,13 +444,13 @@ const Context = struct {
                         }
                     }
 
-                    try member_stack.append(member);
+                    c.member_scratch_stack.push(member);
                 },
                 Dwarf.DW_TAG.structure_type => {
-                    try structure_stack.append(try c.parseStructure(child_die_addr));
+                    c.structure_scratch_stack.push(try c.parseStructure(child_die_addr));
                 },
                 Dwarf.DW_TAG.union_type => {
-                    try union_stack.append(try c.parseStructure(child_die_addr));
+                    c.union_scratch_stack.push(try c.parseStructure(child_die_addr));
                 },
                 else => {
                     try c.dwarf.skipDieAndChildren(die);
@@ -428,18 +459,18 @@ const Context = struct {
         }
 
         const member_start_id = c.members.items.len;
-        try c.members.appendSlice(member_stack.toOwnedSlice());
+        try c.members.appendSlice(c.member_scratch_stack.sliceFrom(member_top_start));
         const member_end_id = c.members.items.len;
 
         const struct_start_id = c.structures.items.len;
-        for (structure_stack.toOwnedSlice()) |s| {
+        for (c.structure_scratch_stack.sliceFrom(structure_top_start)) |s| {
             const id = try c.addStruct(s);
             try c.structure_types.put(s.type_id, id);
         }
         const struct_end_id = c.structures.items.len;
 
         const union_start_id = c.unions.items.len;
-        for (union_stack.toOwnedSlice()) |s| {
+        for (c.union_scratch_stack.sliceFrom(union_top_start)) |s| {
             const id = try c.addUnion(s);
             try c.union_types.put(s.type_id, id);
         }
