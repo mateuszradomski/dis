@@ -316,6 +316,23 @@ const DwarfAttr = struct {
     form: DW_FORM,
 };
 
+const AttrSkipId = u32;
+const AttrSkipRange = Range(AttrSkipId);
+const DwarfAttrSkip = struct {
+    tag: Tag,
+    n: u8 = 0,
+
+    const Tag = enum(u8) {
+        skip_n,
+        skip_uleb,
+        skip_c_string,
+        read_u8_len_and_skip,
+        read_u16_len_and_skip,
+        read_u32_len_and_skip,
+        read_uleb_len_and_skip,
+    };
+};
+
 const DieId = u32;
 const DieRange = Range(DieId);
 const DwarfDie = struct {
@@ -323,6 +340,7 @@ const DwarfDie = struct {
     tag: DW_TAG,
     code: usize,
     attr_range: AttrRange,
+    attr_skip_range: AttrSkipRange,
 };
 
 const DwarfCompilationUnitHeader = struct {
@@ -347,6 +365,7 @@ const DwarfError = error{
 const Self = @This();
 
 attrs: std.ArrayList(DwarfAttr),
+attr_skips: std.ArrayList(DwarfAttrSkip),
 dies: std.ArrayList(DwarfDie),
 cus: std.ArrayList(DwarfCompilationUnit),
 current_cu: DwarfCompilationUnit,
@@ -362,6 +381,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
     var d = Self{
         .dies = std.ArrayList(DwarfDie).init(allocator),
         .attrs = std.ArrayList(DwarfAttr).init(allocator),
+        .attr_skips = std.ArrayList(DwarfAttrSkip).init(allocator),
         .cus = std.ArrayList(DwarfCompilationUnit).init(allocator),
         .current_cu = undefined,
 
@@ -450,16 +470,139 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         }
         const end_attr = d.attrs.items.len;
 
+        const start_attr_skip = d.attr_skips.items.len;
+        const cu = d.cus.items[cu_index];
+        try d.generateAttrSkips(d.attrs.items[start_attr..end_attr], cu.header.address_size, cu.dwarf_address_size);
+        const end_attr_skip = d.attr_skips.items.len;
+
         try d.dies.append(DwarfDie{
             .code = code,
             .tag = tag,
             .attr_range = .{ .start = @intCast(AttrId, start_attr), .end = @intCast(AttrId, end_attr) },
+            .attr_skip_range = .{ .start = @intCast(AttrId, start_attr_skip), .end = @intCast(AttrId, end_attr_skip) },
             .has_children = children == 1,
         });
     }
     d.cus.items[cu_index].die_range = .{ .start = @intCast(DieId, die_start), .end = @intCast(DieId, d.dies.items.len) };
 
     return d;
+}
+
+pub fn generateAttrSkips(self: *Self, attrs: []DwarfAttr, machine_address_size: u8, dwarf_address_size: u8) !void {
+    const SkipHelper = struct {
+        last_skip: ?u16 = null,
+        output: *std.ArrayList(DwarfAttrSkip),
+
+        pub fn skipN(h: *@This(), n: u8) void {
+            if (h.last_skip == null) {
+                h.last_skip = n;
+            } else {
+                const last_skip_val = h.last_skip.?;
+                if (last_skip_val + n > 255) {
+                    unreachable;
+                } else {
+                    h.last_skip.? += n;
+                }
+            }
+        }
+
+        pub fn skipWithTag(h: *@This(), tag: DwarfAttrSkip.Tag) !void {
+            if (h.last_skip) |n| {
+                try h.output.append(DwarfAttrSkip{ .tag = .skip_n, .n = @intCast(u8, n) });
+                h.last_skip = null;
+            }
+            try h.output.append(DwarfAttrSkip{ .tag = tag });
+        }
+
+        pub fn skipULEB(h: *@This()) !void {
+            try h.skipWithTag(.skip_uleb);
+        }
+
+        pub fn skipCString(h: *@This()) !void {
+            try h.skipWithTag(.skip_c_string);
+        }
+
+        pub fn readU8LenAndSkip(h: *@This()) !void {
+            try h.skipWithTag(.read_u8_len_and_skip);
+        }
+
+        pub fn readU16LenAndSkip(h: *@This()) !void {
+            try h.skipWithTag(.read_u16_len_and_skip);
+        }
+
+        pub fn readU32LenAndSkip(h: *@This()) !void {
+            try h.skipWithTag(.read_u32_len_and_skip);
+        }
+
+        pub fn readULEBLenAndSkip(h: *@This()) !void {
+            try h.skipWithTag(.read_uleb_len_and_skip);
+        }
+
+        pub fn finish(h: *@This()) !void {
+            if (h.last_skip) |n| {
+                try h.output.append(DwarfAttrSkip{ .tag = .skip_n, .n = @intCast(u8, n) });
+            }
+        }
+    };
+
+    var helper = SkipHelper{ .output = &self.attr_skips };
+
+    for (attrs) |attr| {
+        switch (attr.form) {
+            DW_FORM.null => unreachable,
+            DW_FORM.addr => {
+                if (machine_address_size == @sizeOf(u64) or machine_address_size == @sizeOf(u32)) {
+                    helper.skipN(machine_address_size);
+                } else {
+                    unreachable;
+                }
+            },
+            DW_FORM.block2 => try helper.readU16LenAndSkip(),
+            DW_FORM.block4 => unreachable,
+            DW_FORM.data2 => helper.skipN(@sizeOf(u16)),
+            DW_FORM.data4 => helper.skipN(@sizeOf(u32)),
+            DW_FORM.data8 => helper.skipN(@sizeOf(u64)),
+            DW_FORM.string => try helper.skipCString(),
+            DW_FORM.block => unreachable,
+            DW_FORM.block1 => try helper.readU8LenAndSkip(),
+            DW_FORM.data1 => helper.skipN(@sizeOf(u8)),
+            DW_FORM.flag => helper.skipN(1),
+            DW_FORM.sdata => try helper.skipULEB(),
+            DW_FORM.strp => helper.skipN(dwarf_address_size),
+            DW_FORM.udata => try helper.skipULEB(),
+            DW_FORM.ref_addr => unreachable,
+            DW_FORM.ref1 => helper.skipN(@sizeOf(u8)),
+            DW_FORM.ref2 => helper.skipN(@sizeOf(u16)),
+            DW_FORM.ref4 => helper.skipN(@sizeOf(u32)),
+            DW_FORM.ref8 => helper.skipN(@sizeOf(u64)),
+            DW_FORM.ref_udata => unreachable,
+            DW_FORM.indirect => unreachable,
+            DW_FORM.sec_offset => helper.skipN(dwarf_address_size),
+            DW_FORM.exprloc => try helper.readULEBLenAndSkip(),
+            DW_FORM.flag_present => {},
+            DW_FORM.strx => unreachable,
+            DW_FORM.addrx => try helper.skipULEB(),
+            DW_FORM.ref_sup4 => unreachable,
+            DW_FORM.strp_sup => unreachable,
+            DW_FORM.data16 => unreachable,
+            DW_FORM.line_strp => unreachable,
+            DW_FORM.ref_sig8 => unreachable,
+            DW_FORM.implicit_const => unreachable,
+            DW_FORM.loclistx => unreachable,
+            DW_FORM.rnglistx => unreachable,
+            DW_FORM.ref_sup8 => unreachable,
+            DW_FORM.strx1 => helper.skipN(1),
+            DW_FORM.strx2 => unreachable,
+            DW_FORM.strx3 => unreachable,
+            DW_FORM.strx4 => unreachable,
+            DW_FORM.addrx1 => unreachable,
+            DW_FORM.addrx2 => unreachable,
+            DW_FORM.addrx3 => unreachable,
+            DW_FORM.addrx4 => unreachable,
+        }
+    }
+
+    try helper.finish();
 }
 
 pub fn setCu(self: *Self, cu: DwarfCompilationUnit) void {
@@ -473,6 +616,10 @@ pub fn inCurrentCu(self: *Self) bool {
 
 pub fn getAttrs(self: *Self, range: AttrRange) []DwarfAttr {
     return self.attrs.items[range.start..range.end];
+}
+
+pub fn getAttrSkips(self: *Self, range: AttrSkipRange) []DwarfAttrSkip {
+    return self.attr_skips.items[range.start..range.end];
 }
 
 pub fn getDies(self: *Self, range: DieRange) []DwarfDie {
@@ -791,8 +938,36 @@ pub fn readNextDie(self: *Self) ?usize {
 }
 
 pub fn skipDieAttrs(self: *Self, die: DwarfDie) void {
-    for (self.getAttrs(die.attr_range)) |attr| {
-        self.skipFormData(attr.form);
+    for (self.getAttrSkips(die.attr_skip_range)) |skip| {
+        switch (skip.tag) {
+            .skip_n => self.debug_info.advance(skip.n),
+            .skip_uleb => {
+                _ = readULEB128(&self.debug_info);
+            },
+            .skip_c_string => {
+                while (self.debug_info.consume(1)) |c| {
+                    if (c[0] == 0) {
+                        break;
+                    }
+                }
+            },
+            .read_u8_len_and_skip => {
+                const len = self.debug_info.consumeType(u8) orelse unreachable;
+                _ = self.debug_info.advance(@intCast(u32, len));
+            },
+            .read_u16_len_and_skip => {
+                const len = self.debug_info.consumeType(u16) orelse unreachable;
+                _ = self.debug_info.advance(@intCast(u32, len));
+            },
+            .read_u32_len_and_skip => {
+                const len = self.debug_info.consumeType(u32) orelse unreachable;
+                _ = self.debug_info.advance(len);
+            },
+            .read_uleb_len_and_skip => {
+                const len = readULEB128(&self.debug_info);
+                _ = self.debug_info.advance(len);
+            },
+        }
     }
 }
 
