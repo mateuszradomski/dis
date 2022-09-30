@@ -344,12 +344,7 @@ const Context = struct {
             for (c.dwarf.cus.items) |cu| {
                 c.dwarf.setCu(cu);
                 while (c.dwarf.readNextDie()) |die_addr| {
-                    const die_opt = try c.dwarf.readDieAtAddress(die_addr);
-
-                    if (die_opt == null) {
-                        continue;
-                    }
-                    const die = die_opt.?;
+                    const die = try c.dwarf.readDieAtAddress(die_addr) orelse continue;
 
                     switch (die.tag) {
                         Dwarf.DW_TAG.structure_type => {
@@ -400,8 +395,7 @@ const Context = struct {
     }
 
     pub fn parseStructure(c: *Context, die_addr: usize) !Structure {
-        var structure = std.mem.zeroes(Structure);
-        structure.type_id = try c.readTypeAtAddress(die_addr);
+        const stype_id = try c.readTypeAtAddress(die_addr);
 
         const member_top_start = c.member_scratch_stack.top;
         defer c.member_scratch_stack.popTo(member_top_start);
@@ -411,12 +405,7 @@ const Context = struct {
         defer c.union_scratch_stack.popTo(union_top_start);
 
         while (c.dwarf.readNextDie()) |child_die_addr| {
-            const die_opt = try c.dwarf.readDieAtAddress(child_die_addr);
-
-            if (die_opt == null) {
-                break;
-            }
-            const die = die_opt.?;
+            const die = try c.dwarf.readDieAtAddress(child_die_addr) orelse break;
             if (die.tag == Dwarf.DW_TAG.padding) {
                 break;
             }
@@ -476,18 +465,22 @@ const Context = struct {
         }
         const union_end_id = c.unions.items.len;
 
-        structure.member_range = MemberRange{
-            .start = @intCast(MemberId, member_start_id),
-            .end = @intCast(MemberId, member_end_id),
+        const structure = Structure{
+            .type_id = stype_id,
+            .member_range = MemberRange{
+                .start = @intCast(MemberId, member_start_id),
+                .end = @intCast(MemberId, member_end_id),
+            },
+            .inline_structures = StructRange{
+                .start = @intCast(StructId, struct_start_id),
+                .end = @intCast(StructId, struct_end_id),
+            },
+            .inline_unions = StructRange{
+                .start = @intCast(StructId, union_start_id),
+                .end = @intCast(StructId, union_end_id),
+            },
         };
-        structure.inline_structures = StructRange{
-            .start = @intCast(StructId, struct_start_id),
-            .end = @intCast(StructId, struct_end_id),
-        };
-        structure.inline_unions = StructRange{
-            .start = @intCast(StructId, union_start_id),
-            .end = @intCast(StructId, union_end_id),
-        };
+
         return structure;
     }
 
@@ -499,12 +492,7 @@ const Context = struct {
         defer member_stack.deinit();
 
         while (c.dwarf.readNextDie()) |die_addr| {
-            const die_opt = try c.dwarf.readDieAtAddress(die_addr);
-
-            if (die_opt == null) {
-                break;
-            }
-            const die = die_opt.?;
+            const die = try c.dwarf.readDieAtAddress(die_addr) orelse break;
             if (die.tag == Dwarf.DW_TAG.padding) {
                 break;
             }
@@ -549,8 +537,7 @@ const Context = struct {
 
     pub fn readTypeAtAddress(c: *Context, type_addr: usize) !TypeId {
         const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
-        const die_opt = try c.dwarf.readDieAtAddress(type_addr);
-        const die = die_opt.?;
+        const die = try c.dwarf.readDieAtAddress(type_addr) orelse unreachable;
 
         if (c.type_addresses.get(global_type_addr)) |id| {
             // TODO(radomski): When the type is already cached we do not
@@ -639,8 +626,7 @@ const Context = struct {
     }
 
     pub fn readTypedefAtAddress(c: *Context, typedef_address: usize) !void {
-        const die_opt = try c.dwarf.readDieAtAddress(typedef_address);
-        const die = die_opt.?;
+        const die = try c.dwarf.readDieAtAddress(typedef_address) orelse unreachable;
 
         var name: []const u8 = "";
         var inner_type_address_opt: ?usize = null;
@@ -659,8 +645,7 @@ const Context = struct {
                     c.dwarf.pushAddress();
                     defer c.dwarf.popAddress();
 
-                    const inner_die_opt = try c.dwarf.readDieAtAddress(inner_type_address);
-                    const inner_die = inner_die_opt.?;
+                    const inner_die = try c.dwarf.readDieAtAddress(inner_type_address) orelse unreachable;
                     if (inner_die.tag == Dwarf.DW_TAG.structure_type or inner_die.tag == Dwarf.DW_TAG.union_type) {
                         inner_type_id = try c.readTypeAtAddress(inner_type_address);
                         member_range = try c.readStructureMembers();
@@ -676,8 +661,7 @@ const Context = struct {
             c.dwarf.pushAddress();
             defer c.dwarf.popAddress();
 
-            const in_die_opt = try c.dwarf.readDieAtAddress(inner_type_address);
-            const in_die = in_die_opt.?;
+            const in_die = try c.dwarf.readDieAtAddress(inner_type_address) orelse unreachable;
             if (in_die.tag == Dwarf.DW_TAG.structure_type or in_die.tag == Dwarf.DW_TAG.union_type) {
                 const id = try c.addType(Type{
                     .name = name,
