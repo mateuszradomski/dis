@@ -1,5 +1,6 @@
 const Buffer = @import("main.zig").Buffer;
 const Range = @import("main.zig").Range;
+const Range2T = @import("main.zig").Range2T;
 const std = @import("std");
 
 pub const DW_TAG = enum(u16) {
@@ -85,7 +86,7 @@ pub const DW_TAG = enum(u16) {
     GNU_call_site_parameter = 0x410a,
 };
 
-pub const DW_AT = enum(u16) {
+pub const DW_AT = enum(u8) {
     null = 0x00,
     sibling = 0x01,
     location = 0x02,
@@ -212,57 +213,10 @@ pub const DW_AT = enum(u16) {
     deleted = 0x8a,
     defaulted = 0x8b,
     loclists_base = 0x8c,
-
-    GNU_vector = 0x2107,
-    GNU_guarded_by = 0x2108,
-    GNU_pt_guarded_by = 0x2109,
-    GNU_guarded = 0x210a,
-    GNU_pt_guarded = 0x210b,
-    GNU_locks_excluded = 0x210c,
-    GNU_exclusive_locks_required = 0x210d,
-    GNU_shared_locks_required = 0x210e,
-    GNU_odr_signature = 0x210f,
-    GNU_template_name = 0x2110,
-    GNU_call_site_value = 0x2111,
-    GNU_call_site_data_value = 0x2112,
-    GNU_call_site_target = 0x2113,
-    GNU_call_site_target_clobbered = 0x2114,
-    GNU_tail_call = 0x2115,
-    GNU_all_tail_call_sites = 0x2116,
-    GNU_all_call_sites = 0x2117,
-    GNU_all_source_call_sites = 0x2118,
-    GNU_macros = 0x2119,
-    GNU_dwo_name = 0x2130,
-    GNU_dwo_id = 0x2131,
-    GNU_ranges_base = 0x2132,
-    GNU_addr_base = 0x2133,
-    GNU_pubnames = 0x2134,
-    GNU_pubtypes = 0x2135,
-    GNU_discriminator = 0x2136,
-    GNU_numerator = 0x2303,
-    GNU_denominator = 0x2304,
-    GNU_bias = 0x2305,
-
-    MIPS_fde = 0x2001,
-    MIPS_loop_begin = 0x2002,
-    MIPS_tail_loop_begin = 0x2003,
-    MIPS_epilog_begin = 0x2004,
-    MIPS_loop_unroll_factor = 0x2005,
-    MIPS_software_pipeline_depth = 0x2006,
-    MIPS_linkage_name = 0x2007,
-    MIPS_stride = 0x2008,
-    MIPS_abstract_name = 0x2009,
-    MIPS_clone_origin = 0x200a,
-    MIPS_has_inlines = 0x200b,
-    MIPS_stride_byte = 0x200c,
-    MIPS_stride_elem = 0x200d,
-    MIPS_ptr_dopetype = 0x200e,
-    MIPS_allocatable_dopetype = 0x200f,
-    MIPS_assumed_shape_dopetype = 0x2010,
-    MIPS_assumed_size = 0x2011,
+    custom_non_spec = 0xff,
 };
 
-pub const DW_FORM = enum(u16) {
+pub const DW_FORM = enum(u8) {
     null = 0x00,
     addr = 0x01,
     block2 = 0x03,
@@ -309,15 +263,18 @@ pub const DW_FORM = enum(u16) {
     addrx4 = 0x2c,
 };
 
-const AttrId = u32;
-const AttrRange = Range(AttrId);
+const AttrId = u24;
+const AttrRangeLen = u8;
+const AttrRange = Range2T(AttrId, AttrRangeLen);
+
 const DwarfAttr = struct {
     at: DW_AT,
     form: DW_FORM,
 };
 
-const AttrSkipId = u32;
-const AttrSkipRange = Range(AttrSkipId);
+const AttrSkipId = u24;
+const AttrSkipRangeLen = u8;
+const AttrSkipRange = Range2T(AttrSkipId, AttrSkipRangeLen);
 const DwarfAttrSkip = struct {
     tag: Tag,
     n: u8 = 0,
@@ -338,7 +295,7 @@ const DieRange = Range(DieId);
 const DwarfDie = struct {
     has_children: bool,
     tag: DW_TAG,
-    code: usize,
+    code: u32,
     attr_range: AttrRange,
     attr_skip_range: AttrSkipRange,
 };
@@ -461,8 +418,18 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
 
         const start_attr = d.attrs.items.len;
         while (debug_abbrev.isGood()) {
-            const at = @intToEnum(DW_AT, readULEB128(debug_abbrev));
-            const val = @intToEnum(DW_FORM, readULEB128(debug_abbrev));
+            const atv = blk: {
+                const uleb = readULEB128(debug_abbrev);
+                if (uleb > std.math.maxInt(u8)) {
+                    break :blk std.math.maxInt(u8);
+                } else {
+                    break :blk uleb;
+                }
+            };
+
+            const at = @intToEnum(DW_AT, atv);
+            // NOTE(radomski): uleb, but always just one byte
+            const val = @intToEnum(DW_FORM, debug_abbrev.consumeType(u8) orelse return DwarfError.EndOfBuffer);
             if (at == DW_AT.null) {
                 break;
             }
@@ -476,10 +443,10 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         const end_attr_skip = d.attr_skips.items.len;
 
         try d.dies.append(DwarfDie{
-            .code = code,
+            .code = @intCast(u32, code),
             .tag = tag,
-            .attr_range = .{ .start = @intCast(AttrId, start_attr), .end = @intCast(AttrId, end_attr) },
-            .attr_skip_range = .{ .start = @intCast(AttrId, start_attr_skip), .end = @intCast(AttrId, end_attr_skip) },
+            .attr_range = .{ .start = @intCast(AttrId, start_attr), .len = @intCast(AttrRangeLen, end_attr - start_attr) },
+            .attr_skip_range = .{ .start = @intCast(AttrSkipId, start_attr_skip), .len = @intCast(AttrSkipRangeLen, end_attr_skip - start_attr_skip) },
             .has_children = children == 1,
         });
     }
@@ -615,11 +582,11 @@ pub fn inCurrentCu(self: *Self) bool {
 }
 
 pub fn getAttrs(self: *Self, range: AttrRange) []DwarfAttr {
-    return self.attrs.items[range.start..range.end];
+    return self.attrs.items[range.start .. range.start + range.len];
 }
 
 pub fn getAttrSkips(self: *Self, range: AttrSkipRange) []DwarfAttrSkip {
-    return self.attr_skips.items[range.start..range.end];
+    return self.attr_skips.items[range.start .. range.start + range.len];
 }
 
 pub fn getDies(self: *Self, range: DieRange) []DwarfDie {

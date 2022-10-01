@@ -182,10 +182,27 @@ pub const Buffer = struct {
     }
 };
 
+pub fn Range2T(comptime IdT: type, comptime LenT: type) type {
+    return packed struct {
+        start: IdT = 0,
+        len: LenT = 0,
+
+        const Self = @This();
+
+        pub fn len(s: Self) LenT {
+            return s.len;
+        }
+
+        pub fn contains(s: Self, id: IdT) bool {
+            return s.start <= id and (s.start + s.len) > id;
+        }
+    };
+}
+
 pub fn Range(comptime T: type) type {
     return struct {
-        start: T = std.math.maxInt(T),
-        end: T = std.math.maxInt(T),
+        start: T = 0,
+        end: T = 0,
 
         const Self = @This();
 
@@ -409,9 +426,6 @@ const Context = struct {
 
         while (c.dwarf.readNextDie()) |child_die_addr| {
             const die = try c.dwarf.readDieAtAddress(child_die_addr) orelse break;
-            if (die.tag == Dwarf.DW_TAG.padding) {
-                break;
-            }
 
             switch (die.tag) {
                 Dwarf.DW_TAG.member => {
@@ -496,9 +510,6 @@ const Context = struct {
 
         while (c.dwarf.readNextDie()) |die_addr| {
             const die = try c.dwarf.readDieAtAddress(die_addr) orelse break;
-            if (die.tag == Dwarf.DW_TAG.padding) {
-                break;
-            }
 
             switch (die.tag) {
                 Dwarf.DW_TAG.member => {
