@@ -878,8 +878,6 @@ const Context = struct {
                 }
             }
 
-            var size = mtype.size;
-
             try stdout.print("{s: >[4]} {s:*<[5]}{s: <[6]}{s}", .{
                 mtype.name,
                 "",
@@ -890,6 +888,7 @@ const Context = struct {
                 type_name_pad - mtype.name.len - mtype.ptr_count,
             });
             var written = member.name.len;
+            var size = mtype.size;
             if (mtype.isArray()) {
                 try stdout.print("[{d}]", .{mtype.dimension});
                 size *= @intCast(u32, mtype.dimension);
@@ -995,7 +994,9 @@ pub fn main() !void {
     const file = try std.fs.cwd().openFile(exec_path, .{});
     defer file.close();
     const file_size = try file.getEndPos();
-    const exec_bin = try file.readToEndAlloc(arena, file_size);
+    var exec_bin = try arena.alloc(u8, file_size);
+    const read = try file.readAll(exec_bin);
+    std.debug.assert(read == file_size);
     var buffer = Buffer{ .data = exec_bin, .curr_pos = 0 };
 
     const header = buffer.consumeType(ELFFileHeader) orelse unreachable;
