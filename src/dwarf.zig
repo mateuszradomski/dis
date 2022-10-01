@@ -294,6 +294,7 @@ const DieId = u32;
 const DieRange = Range(DieId);
 const DwarfDie = struct {
     has_children: bool,
+    sibling_attr_index: u8,
     tag: DW_TAG,
     code: u32,
     attr_range: AttrRange,
@@ -417,7 +418,9 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         const children = (debug_abbrev.consume(1) orelse unreachable)[0];
 
         const start_attr = d.attrs.items.len;
-        while (debug_abbrev.isGood()) {
+        var sibling_attr_index: u8 = std.math.maxInt(u8);
+        var i: u8 = 0;
+        while (debug_abbrev.isGood()) : (i += 1) {
             const atv = blk: {
                 const uleb = readULEB128(debug_abbrev);
                 if (uleb > std.math.maxInt(u8)) {
@@ -433,6 +436,9 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             if (at == DW_AT.null) {
                 break;
             }
+            if (at == DW_AT.sibling) {
+                sibling_attr_index = i;
+            }
             try d.attrs.append(DwarfAttr{ .at = at, .form = val });
         }
         const end_attr = d.attrs.items.len;
@@ -447,6 +453,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             .tag = tag,
             .attr_range = .{ .start = @intCast(AttrId, start_attr), .len = @intCast(AttrRangeLen, end_attr - start_attr) },
             .attr_skip_range = .{ .start = @intCast(AttrSkipId, start_attr_skip), .len = @intCast(AttrSkipRangeLen, end_attr_skip - start_attr_skip) },
+            .sibling_attr_index = sibling_attr_index,
             .has_children = children == 1,
         });
     }
@@ -857,11 +864,23 @@ pub fn readDieAtAddress(self: *Self, addr: usize) !?DwarfDie {
 }
 
 pub fn skipDieAndChildren(self: *Self, die: DwarfDie) !void {
-    self.skipDieAttrs(die);
-    if (die.has_children == true) {
-        while (self.readNextDie()) |addr| {
-            const inner_die = try self.readDieAtAddress(addr) orelse break;
-            try self.skipDieAndChildren(inner_die);
+    if (die.sibling_attr_index != std.math.maxInt(@TypeOf(die.sibling_attr_index))) {
+        var i: u8 = 0;
+        const attrs = self.getAttrs(die.attr_range);
+        while (i < die.sibling_attr_index) : (i += 1) {
+            self.skipFormData(attrs[i].form);
+        }
+        const attr = attrs[die.sibling_attr_index];
+        const address = @intCast(u32, try self.readFormData(attr.form));
+        const global_address = self.toGlobalAddr(address);
+        self.debug_info.curr_pos = global_address;
+    } else {
+        self.skipDieAttrs(die);
+        if (die.has_children == true) {
+            while (self.readNextDie()) |addr| {
+                const inner_die = try self.readDieAtAddress(addr) orelse break;
+                try self.skipDieAndChildren(inner_die);
+            }
         }
     }
 }
