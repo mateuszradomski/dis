@@ -143,6 +143,14 @@ pub const Buffer = struct {
         return self.data[self.curr_pos - amount .. self.curr_pos];
     }
 
+    pub fn advanceUntil(self: *Buffer, delim: u8) void {
+        if (std.mem.indexOfScalar(u8, self.data[self.curr_pos..], delim)) |pos| {
+            self.curr_pos += pos + 1;
+        } else {
+            unreachable;
+        }
+    }
+
     pub fn consumeUntil(self: *Buffer, delim: u8) ?[]u8 {
         const VT: type = comptime std.meta.Vector(16, u8);
 

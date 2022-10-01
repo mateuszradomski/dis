@@ -624,11 +624,7 @@ pub fn skipFormData(self: *Self, form: DW_FORM) void {
             self.debug_info.advance(@sizeOf(u64));
         },
         DW_FORM.string => {
-            while (self.debug_info.consume(1)) |c| {
-                if (c[0] == 0) {
-                    break;
-                }
-            }
+            self.debug_info.advanceUntil(0);
         },
         DW_FORM.block => unreachable,
         DW_FORM.block1 => {
@@ -726,13 +722,7 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
         DW_FORM.data8 => {
             return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
         },
-        DW_FORM.string => {
-            while (self.debug_info.consume(1)) |c| {
-                if (c[0] == 0) {
-                    break;
-                }
-            }
-        },
+        DW_FORM.string => unreachable,
         DW_FORM.block => unreachable,
         DW_FORM.block1 => {
             const len = self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer;
@@ -911,23 +901,17 @@ pub fn skipDieAttrs(self: *Self, die: DwarfDie) void {
             .skip_uleb => {
                 _ = readULEB128(&self.debug_info);
             },
-            .skip_c_string => {
-                while (self.debug_info.consume(1)) |c| {
-                    if (c[0] == 0) {
-                        break;
-                    }
-                }
-            },
+            .skip_c_string => self.debug_info.advanceUntil(0),
             .read_u8_len_and_skip => {
-                const len = self.debug_info.consumeType(u8) orelse unreachable;
+                const len = self.debug_info.consumeTypeUnchecked(u8);
                 _ = self.debug_info.advance(@intCast(u32, len));
             },
             .read_u16_len_and_skip => {
-                const len = self.debug_info.consumeType(u16) orelse unreachable;
+                const len = self.debug_info.consumeTypeUnchecked(u16);
                 _ = self.debug_info.advance(@intCast(u32, len));
             },
             .read_u32_len_and_skip => {
-                const len = self.debug_info.consumeType(u32) orelse unreachable;
+                const len = self.debug_info.consumeTypeUnchecked(u32);
                 _ = self.debug_info.advance(len);
             },
             .read_uleb_len_and_skip => {
