@@ -144,12 +144,33 @@ pub const Buffer = struct {
     }
 
     pub fn consumeUntil(self: *Buffer, delim: u8) ?[]u8 {
-        if (std.mem.indexOfScalar(u8, self.data[self.curr_pos..], delim)) |pos| {
-            const r = self.data[self.curr_pos .. self.curr_pos + pos];
-            self.curr_pos += pos + 1;
-            return r;
+        const VT: type = comptime std.meta.Vector(16, u8);
+
+        if (self.data.len - self.curr_pos > @sizeOf(VT)) {
+            var k: [@sizeOf(VT)]u8 = undefined;
+            const start_pos = self.curr_pos;
+            while (true) {
+                std.mem.copy(u8, &k, self.data[self.curr_pos .. self.curr_pos + @sizeOf(VT)]);
+                const d: VT = k;
+                const zero: VT = std.mem.zeroes(VT);
+                const mask = @bitCast(u16, d == zero);
+                if (mask > 0) {
+                    const pos = @ctz(mask);
+                    const r = self.data[start_pos .. self.curr_pos + pos];
+                    self.curr_pos += pos + 1;
+                    return r;
+                } else {
+                    self.curr_pos += @sizeOf(VT);
+                }
+            }
         } else {
-            return null;
+            if (std.mem.indexOfScalar(u8, self.data[self.curr_pos..], delim)) |pos| {
+                const r = self.data[self.curr_pos .. self.curr_pos + pos];
+                self.curr_pos += pos + 1;
+                return r;
+            } else {
+                return null;
+            }
         }
     }
 
@@ -420,7 +441,7 @@ const Context = struct {
     }
 
     pub fn parseStructure(c: *Context, die_addr: usize) !Structure {
-        const stype_id = try c.readTypeAtAddress(die_addr);
+        const stype_id = try c.readTypeAtAddressAndSkip(die_addr);
 
         const member_top_start = c.member_scratch_stack.top;
         defer c.member_scratch_stack.popTo(member_top_start);
@@ -443,7 +464,7 @@ const Context = struct {
                             Dwarf.DW_AT.type => {
                                 const type_addr = @intCast(u32, try c.dwarf.readFormData(attr.form));
                                 c.dwarf.pushAddress();
-                                member.type_id = try c.readTypeAtAddress(type_addr);
+                                member.type_id = try c.readTypeAtAddressAndNoSkip(type_addr);
                                 c.dwarf.popAddress();
                             },
                             Dwarf.DW_AT.name => {
@@ -527,7 +548,7 @@ const Context = struct {
                             Dwarf.DW_AT.type => {
                                 const type_addr = @intCast(u32, try c.dwarf.readFormData(attr.form));
                                 c.dwarf.pushAddress();
-                                member.type_id = try c.readTypeAtAddress(type_addr);
+                                member.type_id = try c.readTypeAtAddressAndNoSkip(type_addr);
                                 c.dwarf.popAddress();
                             },
                             Dwarf.DW_AT.name => {
@@ -554,7 +575,92 @@ const Context = struct {
         return MemberRange{ .start = @intCast(MemberId, start_index), .end = @intCast(MemberId, end_index) };
     }
 
-    pub fn readTypeAtAddress(c: *Context, type_addr: usize) !TypeId {
+    pub fn readTypeAtAddressAndNoSkip(c: *Context, type_addr: usize) !TypeId {
+        const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
+        const die = try c.dwarf.readDieAtAddress(type_addr) orelse unreachable;
+
+        if (c.type_addresses.get(global_type_addr)) |id| {
+            return id;
+        }
+
+        const default_name = if (die.tag == Dwarf.DW_TAG.structure_type or die.tag == Dwarf.DW_TAG.union_type) "" else "void";
+
+        var name: ?[]const u8 = null;
+        var size: ?u32 = if (die.tag == Dwarf.DW_TAG.pointer_type) 8 else null;
+        var inner_type_id: ?u32 = null;
+        for (c.dwarf.getAttrs(die.attr_range)) |attr| {
+            switch (attr.at) {
+                Dwarf.DW_AT.name => {
+                    name = try c.dwarf.readString(attr.form);
+                },
+                Dwarf.DW_AT.byte_size => {
+                    size = @intCast(u32, try c.dwarf.readFormData(attr.form));
+                },
+                Dwarf.DW_AT.type => {
+                    const inner_type_address = @intCast(u32, try c.dwarf.readFormData(attr.form));
+                    c.dwarf.pushAddress();
+                    inner_type_id = try c.readTypeAtAddressAndNoSkip(inner_type_address);
+                    c.dwarf.popAddress();
+                },
+                else => {
+                    c.dwarf.skipFormData(attr.form);
+                },
+            }
+        }
+
+        var dimension: u32 = 1;
+        var is_array = false;
+        if (die.tag == Dwarf.DW_TAG.array_type) {
+            std.debug.assert(die.has_children);
+            is_array = true;
+            while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
+                for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr| {
+                    switch (child_attr.at) {
+                        Dwarf.DW_AT.upper_bound, Dwarf.DW_AT.count => {
+                            const array_dim = blk: {
+                                const val = @intCast(u64, try c.dwarf.readFormData(child_attr.form));
+                                if (val == std.math.maxInt(u64)) {
+                                    break :blk 0;
+                                } else {
+                                    break :blk val;
+                                }
+                            };
+                            dimension *= @intCast(u32, array_dim);
+                        },
+                        else => {
+                            c.dwarf.skipFormData(child_attr.form);
+                        },
+                    }
+                }
+            }
+        }
+
+        var ptr_count: u8 = if (die.tag == Dwarf.DW_TAG.pointer_type) 1 else 0;
+        if (inner_type_id) |inner_id| {
+            if (name == null) {
+                name = c.types.items[inner_id].name;
+            }
+            if (size == null) {
+                size = c.types.items[inner_id].size;
+            }
+
+            // TODO(radomski): check if needed
+            // dimension *= c.types.items[inner_id].dimension;
+            ptr_count += c.types.items[inner_id].ptr_count;
+        }
+
+        const id = try c.addType(Type{
+            .name = if (name) |n| n else default_name,
+            .size = if (size) |s| s else 0,
+            .ptr_count = ptr_count,
+            .dimension = if (is_array) dimension else std.math.maxInt(@TypeOf(dimension)),
+        });
+        try c.type_addresses.put(global_type_addr, id);
+
+        return id;
+    }
+
+    pub fn readTypeAtAddressAndSkip(c: *Context, type_addr: usize) !TypeId {
         const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
         const die = try c.dwarf.readDieAtAddress(type_addr) orelse unreachable;
 
@@ -583,7 +689,7 @@ const Context = struct {
                 Dwarf.DW_AT.type => {
                     const inner_type_address = @intCast(u32, try c.dwarf.readFormData(attr.form));
                     c.dwarf.pushAddress();
-                    inner_type_id = try c.readTypeAtAddress(inner_type_address);
+                    inner_type_id = try c.readTypeAtAddressAndNoSkip(inner_type_address);
                     c.dwarf.popAddress();
                 },
                 else => {
@@ -666,7 +772,7 @@ const Context = struct {
 
                     const inner_die = try c.dwarf.readDieAtAddress(inner_type_address) orelse unreachable;
                     if (inner_die.tag == Dwarf.DW_TAG.structure_type or inner_die.tag == Dwarf.DW_TAG.union_type) {
-                        inner_type_id = try c.readTypeAtAddress(inner_type_address);
+                        inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
                         member_range = try c.readStructureMembers();
                     }
                 },
@@ -766,17 +872,27 @@ const Context = struct {
 
             var size = mtype.size;
 
-            try stdout.print("{s: >[1]} ", .{ mtype.name, left_pad + 2 + mtype.name.len });
-            try stdout.print("{s:*<[2]}{s: <[3]}", .{ "", "", mtype.ptr_count, type_name_pad - mtype.name.len - mtype.ptr_count });
-            try stdout.print("{s}", .{member.name});
+            try stdout.print("{s: >[4]} {s:*<[5]}{s: <[6]}{s}", .{
+                mtype.name,
+                "",
+                "",
+                member.name,
+                left_pad + 2 + mtype.name.len,
+                mtype.ptr_count,
+                type_name_pad - mtype.name.len - mtype.ptr_count,
+            });
             var written = member.name.len;
             if (mtype.isArray()) {
                 try stdout.print("[{d}]", .{mtype.dimension});
                 size *= @intCast(u32, mtype.dimension);
                 written += fmt.count("[{d}]", .{mtype.dimension});
             }
-            try stdout.print(";{s: <[1]}", .{ "", member_name_pad - written });
-            try stdout.print(" // size={}, offset={}\n", .{ size, mem_offset + member.mem_loc });
+            try stdout.print(";{s: <[3]} // size={}, offset={}\n", .{
+                "",
+                size,
+                mem_offset + member.mem_loc,
+                member_name_pad - written,
+            });
         }
         try stdout.print("{s: <[1]}}};\n", .{ "", left_pad });
     }
