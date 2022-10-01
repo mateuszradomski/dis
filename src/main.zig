@@ -162,6 +162,11 @@ pub const Buffer = struct {
         }
     }
 
+    pub fn consumeTypeUnchecked(self: *Buffer, comptime T: type) T {
+        var slice = self.consumeUnchecked(@sizeOf(T));
+        return std.mem.bytesToValue(T, slice[0..@sizeOf(T)]);
+    }
+
     pub fn consumeTypeAligned(self: *Buffer, comptime T: type, alignment: u32) ?T {
         self.curr_pos += alignment - 1;
         self.curr_pos &= ~(alignment - 1);

@@ -959,13 +959,11 @@ pub fn popAddress(self: *Self) void {
 pub fn readULEB128(b: *Buffer) usize {
     var result: usize = 0;
 
-    // TODO(radomski): @Speed
-    if (b.consumeType(u8)) |v| {
-        result = @intCast(usize, v & 0x7f);
-        if ((v & 0x80) == 0) {
-            return result;
-        }
+    result = b.consumeTypeUnchecked(u8);
+    if ((result & 0x80) == 0) {
+        return result;
     }
+    result = @intCast(usize, result & 0x7f);
 
     var i: usize = 1;
     // var i: usize = 0;
