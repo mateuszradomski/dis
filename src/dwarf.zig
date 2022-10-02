@@ -604,11 +604,14 @@ pub fn toGlobalAddr(self: *Self, local_addr: usize) usize {
     return local_addr + self.current_cu.offset - self.current_cu.header_size;
 }
 
+pub fn toLocalAddr(self: *Self, address: usize) usize {
+    return address - self.current_cu.offset + self.current_cu.header_size;
+}
+
 pub fn skipFormData(self: *Self, form: DW_FORM) void {
     switch (form) {
         DW_FORM.null => unreachable,
         DW_FORM.addr => {
-            // todo
             const memory_word = self.current_cu.header.address_size;
             if (memory_word == @sizeOf(u64) or memory_word == @sizeOf(u32)) {
                 self.debug_info.advance(memory_word);
@@ -706,7 +709,6 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
     switch (form) {
         DW_FORM.null => unreachable,
         DW_FORM.addr => {
-            // todo
             if (self.current_cu.header.address_size == @sizeOf(u64)) {
                 return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u64)));
             } else if (self.current_cu.header.address_size == @sizeOf(u32)) {
@@ -828,7 +830,7 @@ pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
 }
 
 pub fn readDieAtAddress(self: *Self, addr: usize) !?DwarfDie {
-    self.debug_info.curr_pos = addr + self.current_cu.offset - self.current_cu.header_size;
+    self.debug_info.curr_pos = self.toGlobalAddr(addr);
 
     while (self.debug_info.isGood()) {
         const code = readULEB128(&self.debug_info);
@@ -884,8 +886,7 @@ pub fn readDieIfTag(self: *Self, tag: DW_TAG) ?DwarfDie {
 
 pub fn readNextDie(self: *Self) ?usize {
     while (self.debug_info.isGood() and self.inCurrentCu()) {
-        const addr = self.debug_info.curr_pos - self.current_cu.offset + self.current_cu.header_size;
-        return addr;
+        return self.toLocalAddr(self.debug_info.curr_pos);
     }
 
     return null;
