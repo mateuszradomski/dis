@@ -267,7 +267,7 @@ const AttrId = u24;
 const AttrRangeLen = u8;
 const AttrRange = Range2T(AttrId, AttrRangeLen);
 
-const DwarfAttr = struct {
+const Attr = struct {
     at: DW_AT,
     form: DW_FORM,
 };
@@ -275,7 +275,7 @@ const DwarfAttr = struct {
 const AttrSkipId = u24;
 const AttrSkipRangeLen = u8;
 const AttrSkipRange = Range2T(AttrSkipId, AttrSkipRangeLen);
-const DwarfAttrSkip = struct {
+const AttrSkip = struct {
     tag: Tag,
     n: u8 = 0,
 
@@ -292,7 +292,7 @@ const DwarfAttrSkip = struct {
 
 const DieId = u32;
 const DieRange = Range(DieId);
-const DwarfDie = struct {
+const Die = struct {
     has_children: bool,
     sibling_attr_index: u8,
     tag: DW_TAG,
@@ -300,7 +300,7 @@ const DwarfDie = struct {
     attr_skip_range: AttrSkipRange,
 };
 
-const DwarfCompilationUnit = struct {
+const CompilationUnit = struct {
     size: u8,
     address_size: u8,
     version: u16,
@@ -311,17 +311,17 @@ const DwarfCompilationUnit = struct {
     die_range: DieRange,
 };
 
-const DwarfError = error{
+const Error = error{
     EndOfBuffer,
 };
 
 const Self = @This();
 
-attrs: std.ArrayList(DwarfAttr),
-attr_skips: std.ArrayList(DwarfAttrSkip),
-dies: std.ArrayList(DwarfDie),
-cus: std.ArrayList(DwarfCompilationUnit),
-current_cu: DwarfCompilationUnit,
+attrs: std.ArrayList(Attr),
+attr_skips: std.ArrayList(AttrSkip),
+dies: std.ArrayList(Die),
+cus: std.ArrayList(CompilationUnit),
+current_cu: CompilationUnit,
 
 debug_info: Buffer,
 debug_str: Buffer,
@@ -332,10 +332,10 @@ debug_info_address_stack_top: u32,
 
 pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_str_offsets: Buffer, allocator: std.mem.Allocator) !Self {
     var d = Self{
-        .dies = std.ArrayList(DwarfDie).init(allocator),
-        .attrs = std.ArrayList(DwarfAttr).init(allocator),
-        .attr_skips = std.ArrayList(DwarfAttrSkip).init(allocator),
-        .cus = std.ArrayList(DwarfCompilationUnit).init(allocator),
+        .dies = std.ArrayList(Die).init(allocator),
+        .attrs = std.ArrayList(Attr).init(allocator),
+        .attr_skips = std.ArrayList(AttrSkip).init(allocator),
+        .cus = std.ArrayList(CompilationUnit).init(allocator),
         .current_cu = undefined,
 
         .debug_info = debug_info,
@@ -352,31 +352,31 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
 
         var bitness: u8 = 32;
         const unit_length = blk: {
-            const ul32 = d.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer;
+            const ul32 = d.debug_info.consumeType(u32) orelse return Error.EndOfBuffer;
             if (ul32 == std.math.maxInt(u32)) {
                 bitness = 64;
-                break :blk d.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer;
+                break :blk d.debug_info.consumeType(u64) orelse return Error.EndOfBuffer;
             } else {
                 break :blk ul32;
             }
         };
         const unit_length_size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
-        const version = d.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer;
+        const version = d.debug_info.consumeType(u16) orelse return Error.EndOfBuffer;
         const debug_abbrev_offset = blk: {
             if (bitness == 32) {
-                break :blk d.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer;
+                break :blk d.debug_info.consumeType(u32) orelse return Error.EndOfBuffer;
             } else if (bitness == 64) {
-                break :blk d.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer;
+                break :blk d.debug_info.consumeType(u64) orelse return Error.EndOfBuffer;
             } else {
                 unreachable;
             }
         };
-        const address_size = d.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer;
+        const address_size = d.debug_info.consumeType(u8) orelse return Error.EndOfBuffer;
         const size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
         const cu_offset = d.debug_info.curr_pos;
-        const cu = DwarfCompilationUnit{
+        const cu = CompilationUnit{
             .unit_length = @intCast(u32, unit_length),
             .version = version,
             .debug_abbrev_offset = @intCast(u32, debug_abbrev_offset),
@@ -391,7 +391,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         d.debug_info.curr_pos += cu.unit_length - (size - unit_length_size);
     }
     d.popAddress();
-    // d.debug_info.advance(@sizeOf(DwarfCompilationUnitHeader));
+    // d.debug_info.advance(@sizeOf(CompilationUnitHeader));
 
     var cu_index: usize = 0;
     var die_start: usize = 0;
@@ -431,7 +431,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             if (at == DW_AT.sibling) {
                 sibling_attr_index = i;
             }
-            try d.attrs.append(DwarfAttr{ .at = at, .form = val });
+            try d.attrs.append(Attr{ .at = at, .form = val });
         }
         const end_attr = d.attrs.items.len;
 
@@ -440,7 +440,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         try d.generateAttrSkips(d.attrs.items[start_attr..end_attr], cu.address_size, cu.dwarf_address_size);
         const end_attr_skip = d.attr_skips.items.len;
 
-        try d.dies.append(DwarfDie{
+        try d.dies.append(Die{
             .tag = tag,
             .attr_range = .{ .start = @intCast(AttrId, start_attr), .len = @intCast(AttrRangeLen, end_attr - start_attr) },
             .attr_skip_range = .{ .start = @intCast(AttrSkipId, start_attr_skip), .len = @intCast(AttrSkipRangeLen, end_attr_skip - start_attr_skip) },
@@ -453,10 +453,10 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
     return d;
 }
 
-pub fn generateAttrSkips(self: *Self, attrs: []DwarfAttr, machine_address_size: u8, dwarf_address_size: u8) !void {
+pub fn generateAttrSkips(self: *Self, attrs: []Attr, machine_address_size: u8, dwarf_address_size: u8) !void {
     const SkipHelper = struct {
         last_skip: ?u16 = null,
-        output: *std.ArrayList(DwarfAttrSkip),
+        output: *std.ArrayList(AttrSkip),
 
         pub fn skipN(h: *@This(), n: u8) void {
             if (h.last_skip == null) {
@@ -471,12 +471,12 @@ pub fn generateAttrSkips(self: *Self, attrs: []DwarfAttr, machine_address_size: 
             }
         }
 
-        pub fn skipWithTag(h: *@This(), tag: DwarfAttrSkip.Tag) !void {
+        pub fn skipWithTag(h: *@This(), tag: AttrSkip.Tag) !void {
             if (h.last_skip) |n| {
-                try h.output.append(DwarfAttrSkip{ .tag = .skip_n, .n = @intCast(u8, n) });
+                try h.output.append(AttrSkip{ .tag = .skip_n, .n = @intCast(u8, n) });
                 h.last_skip = null;
             }
-            try h.output.append(DwarfAttrSkip{ .tag = tag });
+            try h.output.append(AttrSkip{ .tag = tag });
         }
 
         pub fn skipULEB(h: *@This()) !void {
@@ -505,7 +505,7 @@ pub fn generateAttrSkips(self: *Self, attrs: []DwarfAttr, machine_address_size: 
 
         pub fn finish(h: *@This()) !void {
             if (h.last_skip) |n| {
-                try h.output.append(DwarfAttrSkip{ .tag = .skip_n, .n = @intCast(u8, n) });
+                try h.output.append(AttrSkip{ .tag = .skip_n, .n = @intCast(u8, n) });
             }
         }
     };
@@ -570,7 +570,7 @@ pub fn generateAttrSkips(self: *Self, attrs: []DwarfAttr, machine_address_size: 
     try helper.finish();
 }
 
-pub fn setCu(self: *Self, cu: DwarfCompilationUnit) void {
+pub fn setCu(self: *Self, cu: CompilationUnit) void {
     self.current_cu = cu;
     self.debug_info.curr_pos = cu.offset;
 }
@@ -579,15 +579,15 @@ pub fn inCurrentCu(self: *Self) bool {
     return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.unit_length - 7);
 }
 
-pub fn getAttrs(self: *Self, range: AttrRange) []DwarfAttr {
+pub fn getAttrs(self: *Self, range: AttrRange) []Attr {
     return self.attrs.items[range.start .. range.start + range.len];
 }
 
-pub fn getAttrSkips(self: *Self, range: AttrSkipRange) []DwarfAttrSkip {
+pub fn getAttrSkips(self: *Self, range: AttrSkipRange) []AttrSkip {
     return self.attr_skips.items[range.start .. range.start + range.len];
 }
 
-pub fn getDies(self: *Self, range: DieRange) []DwarfDie {
+pub fn getDies(self: *Self, range: DieRange) []Die {
     return self.dies.items[range.start..range.end];
 }
 
@@ -761,12 +761,12 @@ pub fn readString(self: *Self, form: DW_FORM) ![]const u8 {
 }
 
 pub fn readFormString(self: *Self) ![]const u8 {
-    return self.debug_info.consumeUntil(0) orelse return DwarfError.EndOfBuffer;
+    return self.debug_info.consumeUntil(0) orelse return Error.EndOfBuffer;
 }
 
 pub fn readOffsetString(self: *Self, addr: usize) ![]const u8 {
     self.debug_str.curr_pos = addr;
-    return self.debug_str.consumeUntil(0) orelse return DwarfError.EndOfBuffer;
+    return self.debug_str.consumeUntil(0) orelse return Error.EndOfBuffer;
 }
 
 pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
@@ -775,9 +775,9 @@ pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
 
     const address = blk: {
         if (self.current_cu.dwarf_address_size == @sizeOf(u64)) {
-            break :blk @intCast(usize, (self.debug_str_offsets.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+            break :blk @intCast(usize, (self.debug_str_offsets.consumeType(u64) orelse return Error.EndOfBuffer));
         } else if (self.current_cu.dwarf_address_size == @sizeOf(u32)) {
-            break :blk @intCast(usize, (self.debug_str_offsets.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+            break :blk @intCast(usize, (self.debug_str_offsets.consumeType(u32) orelse return Error.EndOfBuffer));
         } else {
             unreachable;
         }
@@ -798,7 +798,7 @@ pub fn readDieIdAtAddress(self: *Self, addr: usize) !?DieId {
         return self.current_cu.die_range.start + @intCast(DieId, code) - 1;
     }
 
-    return DwarfError.EndOfBuffer;
+    return Error.EndOfBuffer;
 }
 
 pub fn skipDieAndChildren(self: *Self, die_id: DieId) !void {
@@ -824,7 +824,7 @@ pub fn skipDieAndChildren(self: *Self, die_id: DieId) !void {
     }
 }
 
-pub fn readDieIfTag(self: *Self, tag: DW_TAG) ?DwarfDie {
+pub fn readDieIfTag(self: *Self, tag: DW_TAG) ?Die {
     const orig_pos = self.debug_info.curr_pos;
     while (self.debug_info.isGood()) {
         const code = readULEB128(&self.debug_info);
