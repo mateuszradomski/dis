@@ -154,31 +154,29 @@ pub const Buffer = struct {
     pub fn consumeUntil(self: *Buffer, delim: u8) ?[]u8 {
         const VT: type = comptime std.meta.Vector(16, u8);
 
-        if (self.data.len - self.curr_pos > @sizeOf(VT)) {
-            var k: [@sizeOf(VT)]u8 = undefined;
-            const start_pos = self.curr_pos;
-            while (true) {
-                std.mem.copy(u8, &k, self.data[self.curr_pos .. self.curr_pos + @sizeOf(VT)]);
-                const d: VT = k;
-                const zero: VT = std.mem.zeroes(VT);
-                const mask = @bitCast(u16, d == zero);
-                if (mask > 0) {
-                    const pos = @ctz(mask);
-                    const r = self.data[start_pos .. self.curr_pos + pos];
-                    self.curr_pos += pos + 1;
-                    return r;
-                } else {
-                    self.curr_pos += @sizeOf(VT);
-                }
-            }
-        } else {
-            if (std.mem.indexOfScalar(u8, self.data[self.curr_pos..], delim)) |pos| {
-                const r = self.data[self.curr_pos .. self.curr_pos + pos];
+        var k: [@sizeOf(VT)]u8 = undefined;
+        const start_pos = self.curr_pos;
+        while (self.data.len - self.curr_pos > @sizeOf(VT)) {
+            std.mem.copy(u8, &k, self.data[self.curr_pos .. self.curr_pos + @sizeOf(VT)]);
+            const d: VT = k;
+            const zero: VT = std.mem.zeroes(VT);
+            const mask = @bitCast(u16, d == zero);
+            if (mask > 0) {
+                const pos = @ctz(mask);
+                const r = self.data[start_pos .. self.curr_pos + pos];
                 self.curr_pos += pos + 1;
                 return r;
             } else {
-                return null;
+                self.curr_pos += @sizeOf(VT);
             }
+        }
+
+        if (std.mem.indexOfScalar(u8, self.data[self.curr_pos..], delim)) |pos| {
+            const r = self.data[start_pos .. self.curr_pos + pos];
+            self.curr_pos += pos + 1;
+            return r;
+        } else {
+            return null;
         }
     }
 
@@ -833,6 +831,7 @@ const Context = struct {
 
         var type_name_pad: usize = 0;
         var member_name_pad: usize = 0;
+        std.log.debug("members.len = {}", .{members.len});
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
             type_name_pad = @maximum(type_name_pad, mtype.name.len + mtype.ptr_count);
