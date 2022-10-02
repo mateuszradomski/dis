@@ -611,69 +611,38 @@ pub fn toLocalAddr(self: *Self, address: usize) usize {
 pub fn skipFormData(self: *Self, form: DW_FORM) void {
     switch (form) {
         DW_FORM.null => unreachable,
-        DW_FORM.addr => {
-            const memory_word = self.current_cu.header.address_size;
-            if (memory_word == @sizeOf(u64) or memory_word == @sizeOf(u32)) {
-                self.debug_info.advance(memory_word);
-            } else {
-                unreachable;
-            }
-        },
+        DW_FORM.addr => self.debug_info.advance(self.current_cu.header.address_size),
         DW_FORM.block2 => {
             const len = self.debug_info.consumeTypeUnchecked(u16);
             self.debug_info.advance(@intCast(u32, len));
         },
         DW_FORM.block4 => unreachable,
-        DW_FORM.data2 => {
-            self.debug_info.advance(@sizeOf(u16));
-        },
-        DW_FORM.data4 => {
-            self.debug_info.advance(@sizeOf(u32));
-        },
-        DW_FORM.data8 => {
-            self.debug_info.advance(@sizeOf(u64));
-        },
-        DW_FORM.string => {
-            self.debug_info.advanceUntil(0);
-        },
+        DW_FORM.data2 => self.debug_info.advance(@sizeOf(u16)),
+        DW_FORM.data4 => self.debug_info.advance(@sizeOf(u32)),
+        DW_FORM.data8 => self.debug_info.advance(@sizeOf(u64)),
+        DW_FORM.string => self.debug_info.advanceUntil(0),
         DW_FORM.block => unreachable,
         DW_FORM.block1 => {
             const len = self.debug_info.consumeTypeUnchecked(u8);
             _ = self.debug_info.advance(@intCast(u32, len));
         },
-        DW_FORM.data1 => {
-            self.debug_info.advance(@sizeOf(u8));
-        },
-        DW_FORM.flag => {
-            _ = self.debug_info.advance(1);
-        },
+        DW_FORM.data1 => self.debug_info.advance(@sizeOf(u8)),
+        DW_FORM.flag => self.debug_info.advance(1),
         DW_FORM.sdata => {
             _ = readULEB128(&self.debug_info);
         },
-        DW_FORM.strp => {
-            self.debug_info.advance(self.current_cu.dwarf_address_size);
-        },
+        DW_FORM.strp => self.debug_info.advance(self.current_cu.dwarf_address_size),
         DW_FORM.udata => {
             _ = readULEB128(&self.debug_info);
         },
         DW_FORM.ref_addr => unreachable,
-        DW_FORM.ref1 => {
-            self.debug_info.advance(@sizeOf(u8));
-        },
-        DW_FORM.ref2 => {
-            self.debug_info.advance(@sizeOf(u16));
-        },
-        DW_FORM.ref4 => {
-            self.debug_info.advance(@sizeOf(u32));
-        },
-        DW_FORM.ref8 => {
-            self.debug_info.advance(@sizeOf(u64));
-        },
+        DW_FORM.ref1 => self.debug_info.advance(@sizeOf(u8)),
+        DW_FORM.ref2 => self.debug_info.advance(@sizeOf(u16)),
+        DW_FORM.ref4 => self.debug_info.advance(@sizeOf(u32)),
+        DW_FORM.ref8 => self.debug_info.advance(@sizeOf(u64)),
         DW_FORM.ref_udata => unreachable,
         DW_FORM.indirect => unreachable,
-        DW_FORM.sec_offset => {
-            self.debug_info.advance(self.current_cu.dwarf_address_size);
-        },
+        DW_FORM.sec_offset => self.debug_info.advance(self.current_cu.dwarf_address_size),
         DW_FORM.exprloc => {
             const len = readULEB128(&self.debug_info);
             self.debug_info.advance(@intCast(u32, len));
@@ -692,9 +661,7 @@ pub fn skipFormData(self: *Self, form: DW_FORM) void {
         DW_FORM.loclistx => unreachable,
         DW_FORM.rnglistx => unreachable,
         DW_FORM.ref_sup8 => unreachable,
-        DW_FORM.strx1 => {
-            self.debug_info.advance(1);
-        },
+        DW_FORM.strx1 => self.debug_info.advance(1),
         DW_FORM.strx2 => unreachable,
         DW_FORM.strx3 => unreachable,
         DW_FORM.strx4 => unreachable,
