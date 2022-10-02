@@ -432,7 +432,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
 
             const at = @intToEnum(DW_AT, atv);
             // NOTE(radomski): uleb, but always just one byte
-            const val = @intToEnum(DW_FORM, debug_abbrev.consumeType(u8) orelse return DwarfError.EndOfBuffer);
+            const val = @intToEnum(DW_FORM, debug_abbrev.consumeTypeUnchecked(u8));
             if (at == DW_AT.null) {
                 break;
             }
@@ -617,7 +617,7 @@ pub fn skipFormData(self: *Self, form: DW_FORM) void {
             }
         },
         DW_FORM.block2 => {
-            const len = self.debug_info.consumeType(u16) orelse unreachable;
+            const len = self.debug_info.consumeTypeUnchecked(u16);
             self.debug_info.advance(@intCast(u32, len));
         },
         DW_FORM.block4 => unreachable,
@@ -635,7 +635,7 @@ pub fn skipFormData(self: *Self, form: DW_FORM) void {
         },
         DW_FORM.block => unreachable,
         DW_FORM.block1 => {
-            const len = self.debug_info.consumeType(u8) orelse unreachable;
+            const len = self.debug_info.consumeTypeUnchecked(u8);
             _ = self.debug_info.advance(@intCast(u32, len));
         },
         DW_FORM.data1 => {
@@ -708,35 +708,29 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
         DW_FORM.addr => {
             // todo
             if (self.current_cu.header.address_size == @sizeOf(u64)) {
-                return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+                return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u64)));
             } else if (self.current_cu.header.address_size == @sizeOf(u32)) {
-                return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+                return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u32)));
             } else {
                 unreachable;
             }
         },
         DW_FORM.block2 => {
-            const len = self.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer;
+            const len = self.debug_info.consumeTypeUnchecked(u16);
             _ = self.debug_info.advance(@intCast(u32, len));
         },
         DW_FORM.block4 => unreachable,
-        DW_FORM.data2 => {
-            return @intCast(usize, (self.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer));
-        },
-        DW_FORM.data4 => {
-            return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
-        },
-        DW_FORM.data8 => {
-            return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
-        },
+        DW_FORM.data2 => return self.debug_info.consumeTypeUnchecked(u16),
+        DW_FORM.data4 => return self.debug_info.consumeTypeUnchecked(u32),
+        DW_FORM.data8 => return self.debug_info.consumeTypeUnchecked(u64),
         DW_FORM.string => unreachable,
         DW_FORM.block => unreachable,
         DW_FORM.block1 => {
-            const len = self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer;
-            var slice_data = self.debug_info.consume(@intCast(u32, len)) orelse return DwarfError.EndOfBuffer;
+            const len = self.debug_info.consumeTypeUnchecked(u8);
+            var slice_data = self.debug_info.consumeUnchecked(@intCast(u32, len));
 
             var data = Buffer{ .data = slice_data };
-            const op = data.consumeType(u8) orelse return DwarfError.EndOfBuffer;
+            const op = data.consumeTypeUnchecked(u8);
             if (op == 0x23) {
                 const uleb = readULEB128(&data);
                 std.debug.assert(data.curr_pos == data.data.len);
@@ -745,44 +739,30 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
                 unreachable;
             }
         },
-        DW_FORM.data1 => {
-            return @intCast(usize, (self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer));
-        },
+        DW_FORM.data1 => return self.debug_info.consumeTypeUnchecked(u8),
         DW_FORM.flag => unreachable,
-        DW_FORM.sdata => {
-            return readULEB128(&self.debug_info);
-        },
+        DW_FORM.sdata => return readULEB128(&self.debug_info),
         DW_FORM.strp => {
             if (self.current_cu.dwarf_address_size == @sizeOf(u64)) {
-                return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
+                return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u64)));
             } else if (self.current_cu.dwarf_address_size == @sizeOf(u32)) {
-                return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
+                return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u32)));
             } else {
                 unreachable;
             }
         },
-        DW_FORM.udata => {
-            return readULEB128(&self.debug_info);
-        },
+        DW_FORM.udata => return readULEB128(&self.debug_info),
         DW_FORM.ref_addr => unreachable,
-        DW_FORM.ref1 => {
-            return @intCast(usize, (self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer));
-        },
-        DW_FORM.ref2 => {
-            return @intCast(usize, (self.debug_info.consumeType(u16) orelse return DwarfError.EndOfBuffer));
-        },
-        DW_FORM.ref4 => {
-            return @intCast(usize, (self.debug_info.consumeType(u32) orelse return DwarfError.EndOfBuffer));
-        },
-        DW_FORM.ref8 => {
-            return @intCast(usize, (self.debug_info.consumeType(u64) orelse return DwarfError.EndOfBuffer));
-        },
+        DW_FORM.ref1 => return self.debug_info.consumeTypeUnchecked(u8),
+        DW_FORM.ref2 => return self.debug_info.consumeTypeUnchecked(u16),
+        DW_FORM.ref4 => return self.debug_info.consumeTypeUnchecked(u32),
+        DW_FORM.ref8 => return self.debug_info.consumeTypeUnchecked(u64),
         DW_FORM.ref_udata => unreachable,
         DW_FORM.indirect => unreachable,
         DW_FORM.sec_offset => unreachable,
         DW_FORM.exprloc => {
             const len = readULEB128(&self.debug_info);
-            _ = self.debug_info.advance(@intCast(u32, len));
+            self.debug_info.advance(@intCast(u32, len));
         },
         DW_FORM.flag_present => {},
         DW_FORM.strx => unreachable,
@@ -796,9 +776,7 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
         DW_FORM.loclistx => unreachable,
         DW_FORM.rnglistx => unreachable,
         DW_FORM.ref_sup8 => unreachable,
-        DW_FORM.strx1 => {
-            return @intCast(usize, (self.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer));
-        },
+        DW_FORM.strx1 => return self.debug_info.consumeTypeUnchecked(u8),
         DW_FORM.strx2 => unreachable,
         DW_FORM.strx3 => unreachable,
         DW_FORM.strx4 => unreachable,
