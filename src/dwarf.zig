@@ -296,22 +296,17 @@ const DwarfDie = struct {
     has_children: bool,
     sibling_attr_index: u8,
     tag: DW_TAG,
-    code: u32,
     attr_range: AttrRange,
     attr_skip_range: AttrSkipRange,
 };
 
-const DwarfCompilationUnitHeader = struct {
-    unit_length: usize,
-    version: u16,
-    debug_abbrev_offset: usize,
-    address_size: u8,
-};
-
 const DwarfCompilationUnit = struct {
-    header: DwarfCompilationUnitHeader,
-    offset: usize,
-    header_size: u8,
+    size: u8,
+    address_size: u8,
+    version: u16,
+    unit_length: u32,
+    debug_abbrev_offset: u32,
+    offset: u32,
     dwarf_address_size: u8,
     die_range: DieRange,
 };
@@ -378,33 +373,30 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             }
         };
         const address_size = d.debug_info.consumeType(u8) orelse return DwarfError.EndOfBuffer;
-        const header_size = @intCast(u8, d.debug_info.curr_pos - start_pos);
-
-        const cu_header = DwarfCompilationUnitHeader{
-            .unit_length = unit_length,
-            .version = version,
-            .debug_abbrev_offset = debug_abbrev_offset,
-            .address_size = address_size,
-        };
+        const size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
         const cu_offset = d.debug_info.curr_pos;
-        try d.cus.append(DwarfCompilationUnit{
-            .header = cu_header,
-            .offset = cu_offset,
-            .header_size = header_size,
+        const cu = DwarfCompilationUnit{
+            .unit_length = @intCast(u32, unit_length),
+            .version = version,
+            .debug_abbrev_offset = @intCast(u32, debug_abbrev_offset),
+            .address_size = address_size,
+            .offset = @intCast(u32, cu_offset),
+            .size = size,
             .dwarf_address_size = @divExact(bitness, 8),
             .die_range = undefined,
-        });
+        };
+        try d.cus.append(cu);
 
-        d.debug_info.curr_pos += cu_header.unit_length - (header_size - unit_length_size);
+        d.debug_info.curr_pos += cu.unit_length - (size - unit_length_size);
     }
     d.popAddress();
-    d.debug_info.advance(@sizeOf(DwarfCompilationUnitHeader));
+    // d.debug_info.advance(@sizeOf(DwarfCompilationUnitHeader));
 
     var cu_index: usize = 0;
     var die_start: usize = 0;
     while (debug_abbrev.isGood()) {
-        if (cu_index + 1 < d.cus.items.len and d.cus.items[cu_index + 1].header.debug_abbrev_offset <= debug_abbrev.curr_pos) {
+        if (cu_index + 1 < d.cus.items.len and d.cus.items[cu_index + 1].debug_abbrev_offset <= debug_abbrev.curr_pos) {
             d.cus.items[cu_index].die_range = .{ .start = @intCast(DieId, die_start), .end = @intCast(DieId, d.dies.items.len) };
             die_start = d.dies.items.len;
             cu_index += 1;
@@ -445,11 +437,10 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
 
         const start_attr_skip = d.attr_skips.items.len;
         const cu = d.cus.items[cu_index];
-        try d.generateAttrSkips(d.attrs.items[start_attr..end_attr], cu.header.address_size, cu.dwarf_address_size);
+        try d.generateAttrSkips(d.attrs.items[start_attr..end_attr], cu.address_size, cu.dwarf_address_size);
         const end_attr_skip = d.attr_skips.items.len;
 
         try d.dies.append(DwarfDie{
-            .code = @intCast(u32, code),
             .tag = tag,
             .attr_range = .{ .start = @intCast(AttrId, start_attr), .len = @intCast(AttrRangeLen, end_attr - start_attr) },
             .attr_skip_range = .{ .start = @intCast(AttrSkipId, start_attr_skip), .len = @intCast(AttrSkipRangeLen, end_attr_skip - start_attr_skip) },
@@ -585,7 +576,7 @@ pub fn setCu(self: *Self, cu: DwarfCompilationUnit) void {
 }
 
 pub fn inCurrentCu(self: *Self) bool {
-    return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.header.unit_length - 7);
+    return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.unit_length - 7);
 }
 
 pub fn getAttrs(self: *Self, range: AttrRange) []DwarfAttr {
@@ -601,17 +592,17 @@ pub fn getDies(self: *Self, range: DieRange) []DwarfDie {
 }
 
 pub fn toGlobalAddr(self: *Self, local_addr: usize) usize {
-    return local_addr + self.current_cu.offset - self.current_cu.header_size;
+    return local_addr + self.current_cu.offset - self.current_cu.size;
 }
 
 pub fn toLocalAddr(self: *Self, address: usize) usize {
-    return address - self.current_cu.offset + self.current_cu.header_size;
+    return address - self.current_cu.offset + self.current_cu.size;
 }
 
 pub fn skipFormData(self: *Self, form: DW_FORM) void {
     switch (form) {
         DW_FORM.null => unreachable,
-        DW_FORM.addr => self.debug_info.advance(self.current_cu.header.address_size),
+        DW_FORM.addr => self.debug_info.advance(self.current_cu.address_size),
         DW_FORM.block2 => {
             const len = self.debug_info.consumeTypeUnchecked(u16);
             self.debug_info.advance(@intCast(u32, len));
@@ -676,9 +667,9 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
     switch (form) {
         DW_FORM.null => unreachable,
         DW_FORM.addr => {
-            if (self.current_cu.header.address_size == @sizeOf(u64)) {
+            if (self.current_cu.address_size == @sizeOf(u64)) {
                 return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u64)));
-            } else if (self.current_cu.header.address_size == @sizeOf(u32)) {
+            } else if (self.current_cu.address_size == @sizeOf(u32)) {
                 return @intCast(usize, (self.debug_info.consumeTypeUnchecked(u32)));
             } else {
                 unreachable;
@@ -779,8 +770,8 @@ pub fn readOffsetString(self: *Self, addr: usize) ![]const u8 {
 }
 
 pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
-    const header_size = self.current_cu.dwarf_address_size * 2;
-    self.debug_str_offsets.curr_pos = index * self.current_cu.dwarf_address_size + header_size;
+    const size = self.current_cu.dwarf_address_size * 2;
+    self.debug_str_offsets.curr_pos = index * self.current_cu.dwarf_address_size + size;
 
     const address = blk: {
         if (self.current_cu.dwarf_address_size == @sizeOf(u64)) {
