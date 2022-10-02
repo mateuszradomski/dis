@@ -6,42 +6,48 @@ const Dwarf = @import("dwarf.zig");
 const KiloByte = 1024;
 const MegaByte = KiloByte * 1024;
 
-const ELFFileHeader = struct {
+const ELFIdentHeader = struct {
     eh_magic: [4]u8,
     eh_class: u8,
     eh_data: u8,
     eh_version: u8,
     eh_osabi: u8,
     eh_abi_version: u8,
-    eh_pad: u8,
-
-    e_type: u16,
-    e_machine: u16,
-    e_version: u32,
-    e_entry: usize,
-    e_phoff: usize,
-    e_shoff: usize,
-    e_flags: u32,
-    e_ehsize: u16,
-    e_phentsize: u16,
-    e_phnum: u16,
-    e_shentsize: u16,
-    e_shnum: u16,
-    e_shstrndx: u16,
+    eh_pad: [7]u8,
 };
 
-const ELFSectionHeader = struct {
-    sh_name: u32,
-    sh_type: u32,
-    sh_flags: usize,
-    sh_addr: usize,
-    sh_offset: usize,
-    sh_size: usize,
-    sh_link: u32,
-    sh_info: u32,
-    sh_addralign: usize,
-    sh_entsize: usize,
-};
+pub fn ELFFileHeader(comptime T: type) type {
+    return struct {
+        e_type: u16,
+        e_machine: u16,
+        e_version: u32,
+        e_entry: T,
+        e_phoff: T,
+        e_shoff: T,
+        e_flags: u32,
+        e_ehsize: u16,
+        e_phentsize: u16,
+        e_phnum: u16,
+        e_shentsize: u16,
+        e_shnum: u16,
+        e_shstrndx: u16,
+    };
+}
+
+pub fn ELFSectionHeader(comptime T: type) type {
+    return struct {
+        sh_name: u32,
+        sh_type: u32,
+        sh_flags: T,
+        sh_addr: T,
+        sh_offset: T,
+        sh_size: T,
+        sh_link: u32,
+        sh_info: u32,
+        sh_addralign: T,
+        sh_entsize: T,
+    };
+}
 
 const ELFRelocationType = enum(u32) {
     R_X86_64_NONE = 0,
@@ -115,6 +121,13 @@ const ELFRelocationA = struct {
     pub fn relocationType(s: Self) ELFRelocationType {
         return @intToEnum(ELFRelocationType, @truncate(u32, s.r_info));
     }
+};
+
+const ELFDebugSections = struct {
+    debug_abbrev: Buffer,
+    debug_info: Buffer,
+    debug_str: Buffer,
+    debug_str_offsets: Buffer,
 };
 
 pub const Buffer = struct {
@@ -831,7 +844,6 @@ const Context = struct {
 
         var type_name_pad: usize = 0;
         var member_name_pad: usize = 0;
-        std.log.debug("members.len = {}", .{members.len});
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
             type_name_pad = @maximum(type_name_pad, mtype.name.len + mtype.ptr_count);
@@ -941,7 +953,8 @@ const Context = struct {
 };
 
 pub fn getSectionBuffer(
-    section_headers: []const ELFSectionHeader,
+    comptime T: type,
+    section_headers: []const T,
     sh_bufferi_opt: ?usize,
     file_buffer: *Buffer,
 ) Buffer {
@@ -979,30 +992,12 @@ pub fn relocateBuffer(buffer: Buffer, rela_buff: *Buffer, symtab_buff: *Buffer) 
     }
 }
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    if (std.os.argv.len != 2) {
-        std.log.warn("usage: {s} <exec path>", .{std.os.argv[0]});
-        return;
-    }
-
-    const exec_path = std.mem.span(std.os.argv[1]);
-    const file = try std.fs.cwd().openFile(exec_path, .{});
-    defer file.close();
-    const file_size = try file.getEndPos();
-    var exec_bin = try arena.alloc(u8, file_size);
-    const read = try file.readAll(exec_bin);
-    std.debug.assert(read == file_size);
-    var buffer = Buffer{ .data = exec_bin, .curr_pos = 0 };
-
-    const header = buffer.consumeType(ELFFileHeader) orelse unreachable;
+pub fn readElfGeneric(comptime T: type, buffer: *Buffer, arena: std.mem.Allocator) !ELFDebugSections {
+    const header = buffer.consumeType(ELFFileHeader(T)) orelse unreachable;
     buffer.curr_pos = header.e_shoff;
-    var section_headers = try arena.alloc(ELFSectionHeader, header.e_shnum);
+    var section_headers = try arena.alloc(ELFSectionHeader(T), header.e_shnum);
     for (section_headers) |_, i| {
-        section_headers[i] = buffer.consumeType(ELFSectionHeader) orelse unreachable;
+        section_headers[i] = buffer.consumeType(ELFSectionHeader(T)) orelse unreachable;
     }
 
     const shstrtab = section_headers[header.e_shstrndx];
@@ -1048,31 +1043,81 @@ pub fn main() !void {
         }
     }
 
-    var symtab = getSectionBuffer(section_headers, sh_symtabi, &buffer);
-    var debug_abbrev = getSectionBuffer(section_headers, sh_debug_abbrevi, &buffer);
-    var debug_info = getSectionBuffer(section_headers, sh_debug_infoi, &buffer);
-    var debug_str = getSectionBuffer(section_headers, sh_debug_stri, &buffer);
-    var debug_str_offsets = getSectionBuffer(section_headers, sh_debug_str_offsetsi, &buffer);
+    var symtab = getSectionBuffer(ELFSectionHeader(T), section_headers, sh_symtabi, buffer);
+    var debug_abbrev = getSectionBuffer(ELFSectionHeader(T), section_headers, sh_debug_abbrevi, buffer);
+    var debug_info = getSectionBuffer(ELFSectionHeader(T), section_headers, sh_debug_infoi, buffer);
+    var debug_str = getSectionBuffer(ELFSectionHeader(T), section_headers, sh_debug_stri, buffer);
+    var debug_str_offsets = getSectionBuffer(ELFSectionHeader(T), section_headers, sh_debug_str_offsetsi, buffer);
 
     if (sh_debug_info_relai) |relai| {
-        var rela = getSectionBuffer(section_headers, relai, &buffer);
+        var rela = getSectionBuffer(ELFSectionHeader(T), section_headers, relai, buffer);
         relocateBuffer(debug_info, &rela, &symtab);
     }
     if (sh_debug_abbrev_relai) |relai| {
-        var rela = getSectionBuffer(section_headers, relai, &buffer);
+        var rela = getSectionBuffer(ELFSectionHeader(T), section_headers, relai, buffer);
         relocateBuffer(debug_abbrev, &rela, &symtab);
     }
     if (sh_debug_str_relai) |relai| {
-        var rela = getSectionBuffer(section_headers, relai, &buffer);
+        var rela = getSectionBuffer(ELFSectionHeader(T), section_headers, relai, buffer);
         relocateBuffer(debug_str, &rela, &symtab);
     }
     if (sh_debug_str_offsets_relai) |relai| {
-        var rela = getSectionBuffer(section_headers, relai, &buffer);
+        var rela = getSectionBuffer(ELFSectionHeader(T), section_headers, relai, buffer);
         relocateBuffer(debug_str_offsets, &rela, &symtab);
     }
 
+    return ELFDebugSections{
+        .debug_abbrev = debug_abbrev,
+        .debug_info = debug_info,
+        .debug_str = debug_str,
+        .debug_str_offsets = debug_str_offsets,
+    };
+}
+
+pub fn readElf32(buffer: *Buffer, arena: std.mem.Allocator) !ELFDebugSections {
+    return readElfGeneric(u32, buffer, arena);
+}
+
+pub fn readElf64(buffer: *Buffer, arena: std.mem.Allocator) !ELFDebugSections {
+    return readElfGeneric(u64, buffer, arena);
+}
+
+pub fn main() !void {
+    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
+
+    if (std.os.argv.len != 2) {
+        std.log.warn("usage: {s} <exec path>", .{std.os.argv[0]});
+        return;
+    }
+
+    const exec_path = std.mem.span(std.os.argv[1]);
+    const file = try std.fs.cwd().openFile(exec_path, .{});
+    defer file.close();
+    const file_size = try file.getEndPos();
+    var exec_bin = try arena.alloc(u8, file_size);
+    const read = try file.readAll(exec_bin);
+    std.debug.assert(read == file_size);
+    var buffer = Buffer{ .data = exec_bin, .curr_pos = 0 };
+
+    const ELF_32BIT_CLASS = 1;
+    const ELF_64BIT_CLASS = 2;
+    const header_ident = buffer.consumeType(ELFIdentHeader) orelse unreachable;
+    var sections = switch (header_ident.eh_class) {
+        ELF_32BIT_CLASS => try readElf32(&buffer, arena),
+        ELF_64BIT_CLASS => try readElf64(&buffer, arena),
+        else => unreachable,
+    };
+
     var timer = try std.time.Timer.start();
-    var dwarf = try Dwarf.init(&debug_abbrev, debug_info, debug_str, debug_str_offsets, arena);
+    var dwarf = try Dwarf.init(
+        &sections.debug_abbrev,
+        sections.debug_info,
+        sections.debug_str,
+        sections.debug_str_offsets,
+        arena,
+    );
     const ns = timer.read();
     std.debug.print("Dwarf init: {}\n", .{std.fmt.fmtDuration(ns)});
     var context = try Context.init(arena, dwarf);
