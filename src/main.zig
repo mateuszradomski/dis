@@ -407,7 +407,8 @@ const Context = struct {
             for (c.dwarf.cus.items) |cu| {
                 c.dwarf.setCu(cu);
                 while (c.dwarf.readNextDie()) |die_addr| {
-                    const die = try c.dwarf.readDieAtAddress(die_addr) orelse continue;
+                    const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse continue;
+                    const die = c.dwarf.dies.items[die_id];
 
                     switch (die.tag) {
                         Dwarf.DW_TAG.structure_type => {
@@ -429,10 +430,10 @@ const Context = struct {
                             try c.readTypedefAtAddress(die_addr);
                         },
                         Dwarf.DW_TAG.compile_unit => {
-                            c.dwarf.skipDieAttrs(die);
+                            c.dwarf.skipDieAttrs(die_id);
                         },
                         else => {
-                            try c.dwarf.skipDieAndChildren(die);
+                            try c.dwarf.skipDieAndChildren(die_id);
                         },
                     }
                 }
@@ -470,7 +471,8 @@ const Context = struct {
         defer c.union_scratch_stack.popTo(union_top_start);
 
         while (c.dwarf.readNextDie()) |child_die_addr| {
-            const die = try c.dwarf.readDieAtAddress(child_die_addr) orelse break;
+            const die_id = try c.dwarf.readDieIdAtAddress(child_die_addr) orelse break;
+            const die = c.dwarf.dies.items[die_id];
 
             switch (die.tag) {
                 Dwarf.DW_TAG.member => {
@@ -504,7 +506,7 @@ const Context = struct {
                     c.union_scratch_stack.push(try c.parseStructure(child_die_addr));
                 },
                 else => {
-                    try c.dwarf.skipDieAndChildren(die);
+                    try c.dwarf.skipDieAndChildren(die_id);
                 },
             }
         }
@@ -554,7 +556,8 @@ const Context = struct {
         defer member_stack.deinit();
 
         while (c.dwarf.readNextDie()) |die_addr| {
-            const die = try c.dwarf.readDieAtAddress(die_addr) orelse break;
+            const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse break;
+            const die = c.dwarf.dies.items[die_id];
 
             switch (die.tag) {
                 Dwarf.DW_TAG.member => {
@@ -582,7 +585,7 @@ const Context = struct {
                     try member_stack.append(member);
                 },
                 else => {
-                    try c.dwarf.skipDieAndChildren(die);
+                    try c.dwarf.skipDieAndChildren(die_id);
                 },
             }
         }
@@ -596,7 +599,8 @@ const Context = struct {
 
     pub fn readTypeAtAddressAndNoSkip(c: *Context, type_addr: usize) !TypeId {
         const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
-        const die = try c.dwarf.readDieAtAddress(type_addr) orelse unreachable;
+        const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
+        const die = c.dwarf.dies.items[die_id];
 
         if (c.type_addresses.get(global_type_addr)) |id| {
             return id;
@@ -681,17 +685,18 @@ const Context = struct {
 
     pub fn readTypeAtAddressAndSkip(c: *Context, type_addr: usize) !TypeId {
         const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
-        const die = try c.dwarf.readDieAtAddress(type_addr) orelse unreachable;
+        const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
 
         if (c.type_addresses.get(global_type_addr)) |id| {
             // TODO(radomski): When the type is already cached we do not
             // read over the attrs, and that causes the upper function to
             // fail. We somehow need to skip the attrs if we already read
             // that type.
-            c.dwarf.skipDieAttrs(die);
+            c.dwarf.skipDieAttrs(die_id);
             return id;
         }
 
+        const die = c.dwarf.dies.items[die_id];
         const default_name = if (die.tag == Dwarf.DW_TAG.structure_type or die.tag == Dwarf.DW_TAG.union_type) "" else "void";
 
         var name: ?[]const u8 = null;
@@ -770,7 +775,8 @@ const Context = struct {
     }
 
     pub fn readTypedefAtAddress(c: *Context, typedef_address: usize) !void {
-        const die = try c.dwarf.readDieAtAddress(typedef_address) orelse unreachable;
+        const die_id = try c.dwarf.readDieIdAtAddress(typedef_address) orelse unreachable;
+        const die = c.dwarf.dies.items[die_id];
 
         var name: []const u8 = "";
         var inner_type_address_opt: ?usize = null;
@@ -789,7 +795,8 @@ const Context = struct {
                     c.dwarf.pushAddress();
                     defer c.dwarf.popAddress();
 
-                    const inner_die = try c.dwarf.readDieAtAddress(inner_type_address) orelse unreachable;
+                    const inner_die_id = try c.dwarf.readDieIdAtAddress(inner_type_address) orelse unreachable;
+                    const inner_die = c.dwarf.dies.items[inner_die_id];
                     if (inner_die.tag == Dwarf.DW_TAG.structure_type or inner_die.tag == Dwarf.DW_TAG.union_type) {
                         inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
                         member_range = try c.readStructureMembers();
@@ -805,7 +812,8 @@ const Context = struct {
             c.dwarf.pushAddress();
             defer c.dwarf.popAddress();
 
-            const in_die = try c.dwarf.readDieAtAddress(inner_type_address) orelse unreachable;
+            const in_die_id = try c.dwarf.readDieIdAtAddress(inner_type_address) orelse unreachable;
+            const in_die = c.dwarf.dies.items[in_die_id];
             if (in_die.tag == Dwarf.DW_TAG.structure_type or in_die.tag == Dwarf.DW_TAG.union_type) {
                 const id = try c.addType(Type{
                     .name = name,

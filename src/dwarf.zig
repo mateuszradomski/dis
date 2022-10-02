@@ -787,7 +787,7 @@ pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
     return name;
 }
 
-pub fn readDieAtAddress(self: *Self, addr: usize) !?DwarfDie {
+pub fn readDieIdAtAddress(self: *Self, addr: usize) !?DieId {
     self.debug_info.curr_pos = self.toGlobalAddr(addr);
 
     while (self.debug_info.isGood()) {
@@ -795,13 +795,14 @@ pub fn readDieAtAddress(self: *Self, addr: usize) !?DwarfDie {
         if (code == 0) {
             return null;
         }
-        return self.getDies(self.current_cu.die_range)[code - 1];
+        return self.current_cu.die_range.start + @intCast(DieId, code) - 1;
     }
 
     return DwarfError.EndOfBuffer;
 }
 
-pub fn skipDieAndChildren(self: *Self, die: DwarfDie) !void {
+pub fn skipDieAndChildren(self: *Self, die_id: DieId) !void {
+    const die = self.dies.items[die_id];
     if (die.sibling_attr_index != std.math.maxInt(@TypeOf(die.sibling_attr_index))) {
         var i: u8 = 0;
         const attrs = self.getAttrs(die.attr_range);
@@ -813,11 +814,11 @@ pub fn skipDieAndChildren(self: *Self, die: DwarfDie) !void {
         const global_address = self.toGlobalAddr(address);
         self.debug_info.curr_pos = global_address;
     } else {
-        self.skipDieAttrs(die);
+        self.skipDieAttrs(die_id);
         if (die.has_children == true) {
             while (self.readNextDie()) |addr| {
-                const inner_die = try self.readDieAtAddress(addr) orelse break;
-                try self.skipDieAndChildren(inner_die);
+                const inner_die_id = try self.readDieIdAtAddress(addr) orelse break;
+                try self.skipDieAndChildren(inner_die_id);
             }
         }
     }
@@ -850,7 +851,8 @@ pub fn readNextDie(self: *Self) ?usize {
     return null;
 }
 
-pub fn skipDieAttrs(self: *Self, die: DwarfDie) void {
+pub fn skipDieAttrs(self: *Self, die_id: DieId) void {
+    const die = self.dies.items[die_id];
     for (self.getAttrSkips(die.attr_skip_range)) |skip| {
         switch (skip.tag) {
             .skip_n => self.debug_info.advance(skip.n),
