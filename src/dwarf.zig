@@ -415,7 +415,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             continue;
         }
         const tag = @intToEnum(DW_TAG, readULEB128(debug_abbrev));
-        const children = (debug_abbrev.consume(1) orelse unreachable)[0];
+        const children = debug_abbrev.consumeTypeUnchecked(u8);
 
         const start_attr = d.attrs.items.len;
         var sibling_attr_index: u8 = std.math.maxInt(u8);
@@ -969,9 +969,8 @@ pub fn readULEB128(b: *Buffer) usize {
     result = @intCast(usize, result & 0x7f);
 
     var i: usize = 1;
-    // var i: usize = 0;
-    while (b.consume(1)) |bytes| {
-        const byte = bytes[0];
+    while (true) {
+        const byte = b.consumeTypeUnchecked(u8);
 
         result = result | (@intCast(usize, byte & 0x7f) << @intCast(u6, i * 7));
         if ((byte & 0x80) == 0) {
