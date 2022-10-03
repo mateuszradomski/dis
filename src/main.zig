@@ -437,6 +437,8 @@ const Context = struct {
                         },
                     }
                 }
+
+                c.type_addresses.clearRetainingCapacity();
             }
             const ns = timer.read();
             const elapsed_s = @intToFloat(f64, ns) / time.ns_per_s;
