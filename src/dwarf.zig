@@ -327,7 +327,7 @@ debug_info: Buffer,
 debug_str: Buffer,
 debug_str_offsets: Buffer,
 
-debug_info_address_stack: [8]usize,
+debug_info_address_stack: [64]usize,
 debug_info_address_stack_top: u32,
 
 pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_str_offsets: Buffer, allocator: std.mem.Allocator) !Self {
