@@ -615,13 +615,12 @@ const Context = struct {
     }
 
     pub fn readTypeAtAddressAndNoSkip(c: *Context, type_addr: usize) !TypeId {
-        const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
-        const die = c.dwarf.dies.items[die_id];
-
         if (c.type_addresses[type_addr] != std.math.maxInt(TypeId)) {
             return c.type_addresses[type_addr];
         }
 
+        const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
+        const die = c.dwarf.dies.items[die_id];
         const default_name = if (die.tag == Dwarf.DW_TAG.structure_type or die.tag == Dwarf.DW_TAG.union_type) "" else "void";
 
         var name: ?[]const u8 = null;
@@ -701,7 +700,6 @@ const Context = struct {
 
     pub fn readTypeAtAddressAndSkip(c: *Context, type_addr: usize) !TypeId {
         const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
-
         if (c.type_addresses[type_addr] != std.math.maxInt(TypeId)) {
             // TODO(radomski): When the type is already cached we do not
             // read over the attrs, and that causes the upper function to
