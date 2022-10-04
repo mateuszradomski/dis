@@ -267,6 +267,15 @@ const Type = struct {
     size: u32,
     dimension: u32,
     ptr_count: u8,
+    struct_type: StructType = .none,
+    struct_id: StructId = std.math.maxInt(StructId),
+
+    const StructType = enum(u8) {
+        none,
+        struct_type,
+        union_type,
+        class_type,
+    };
 
     pub fn isArray(self: Type) bool {
         return self.dimension != std.math.maxInt(@TypeOf(self.dimension));
@@ -339,13 +348,10 @@ const Context = struct {
     const Self = @This();
 
     types: std.ArrayList(Type),
-    type_addresses: std.AutoHashMap(usize, TypeId),
+    type_addresses: []TypeId = &[_]TypeId{},
     structures: std.ArrayList(Structure),
-    structure_types: std.AutoHashMap(TypeId, StructId),
     unions: std.ArrayList(Structure),
-    union_types: std.AutoHashMap(TypeId, StructId),
     classes: std.ArrayList(Structure),
-    class_types: std.AutoHashMap(TypeId, StructId),
     members: std.ArrayList(StructMember),
     dwarf: Dwarf,
 
@@ -358,13 +364,9 @@ const Context = struct {
     pub fn init(allocator: std.mem.Allocator, dwarf: Dwarf) !Self {
         var c = Context{
             .types = std.ArrayList(Type).init(allocator),
-            .type_addresses = std.AutoHashMap(usize, u32).init(allocator),
             .structures = std.ArrayList(Structure).init(allocator),
-            .structure_types = std.AutoHashMap(TypeId, StructId).init(allocator),
             .unions = std.ArrayList(Structure).init(allocator),
-            .union_types = std.AutoHashMap(TypeId, StructId).init(allocator),
             .classes = std.ArrayList(Structure).init(allocator),
-            .class_types = std.AutoHashMap(TypeId, StructId).init(allocator),
             .members = std.ArrayList(StructMember).init(allocator),
             .dwarf = dwarf,
             .gpa = allocator,
@@ -404,8 +406,16 @@ const Context = struct {
     pub fn run(c: *Self) !void {
         {
             var timer = try std.time.Timer.start();
+            var biggest_cu_size: u32 = 0;
+            for (c.dwarf.cus.items) |cu| {
+                biggest_cu_size = @maximum(biggest_cu_size, cu.unit_length + cu.size);
+            }
+            c.type_addresses = try c.gpa.alloc(TypeId, biggest_cu_size);
+            std.mem.set(TypeId, c.type_addresses, std.math.maxInt(TypeId));
+
             for (c.dwarf.cus.items) |cu| {
                 c.dwarf.setCu(cu);
+
                 while (c.dwarf.readNextDie()) |die_addr| {
                     const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse continue;
                     const die = c.dwarf.dies.items[die_id];
@@ -414,17 +424,20 @@ const Context = struct {
                         Dwarf.DW_TAG.structure_type => {
                             const s = try c.parseStructure(die_addr);
                             const id = try c.addStruct(s);
-                            try c.structure_types.put(s.type_id, id);
+                            c.types.items[s.type_id].struct_id = id;
+                            c.types.items[s.type_id].struct_type = .struct_type;
                         },
                         Dwarf.DW_TAG.union_type => {
                             const s = try c.parseStructure(die_addr);
                             const id = try c.addUnion(s);
-                            try c.union_types.put(s.type_id, id);
+                            c.types.items[s.type_id].struct_id = id;
+                            c.types.items[s.type_id].struct_type = .union_type;
                         },
                         Dwarf.DW_TAG.class_type => {
                             const s = try c.parseStructure(die_addr);
                             const id = try c.addClass(s);
-                            try c.class_types.put(s.type_id, id);
+                            c.types.items[s.type_id].struct_id = id;
+                            c.types.items[s.type_id].struct_type = .class_type;
                         },
                         Dwarf.DW_TAG.typedef => {
                             try c.readTypedefAtAddress(die_addr);
@@ -438,7 +451,7 @@ const Context = struct {
                     }
                 }
 
-                c.type_addresses.clearRetainingCapacity();
+                std.mem.set(TypeId, c.type_addresses[0 .. cu.size + cu.unit_length], std.math.maxInt(TypeId));
             }
             const ns = timer.read();
             const elapsed_s = @intToFloat(f64, ns) / time.ns_per_s;
@@ -520,14 +533,16 @@ const Context = struct {
         const struct_start_id = c.structures.items.len;
         for (c.structure_scratch_stack.sliceFrom(structure_top_start)) |s| {
             const id = try c.addStruct(s);
-            try c.structure_types.put(s.type_id, id);
+            c.types.items[s.type_id].struct_id = id;
+            c.types.items[s.type_id].struct_type = .struct_type;
         }
         const struct_end_id = c.structures.items.len;
 
         const union_start_id = c.unions.items.len;
         for (c.union_scratch_stack.sliceFrom(union_top_start)) |s| {
             const id = try c.addUnion(s);
-            try c.union_types.put(s.type_id, id);
+            c.types.items[s.type_id].struct_id = id;
+            c.types.items[s.type_id].struct_type = .union_type;
         }
         const union_end_id = c.unions.items.len;
 
@@ -600,12 +615,11 @@ const Context = struct {
     }
 
     pub fn readTypeAtAddressAndNoSkip(c: *Context, type_addr: usize) !TypeId {
-        const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
         const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
         const die = c.dwarf.dies.items[die_id];
 
-        if (c.type_addresses.get(global_type_addr)) |id| {
-            return id;
+        if (c.type_addresses[type_addr] != std.math.maxInt(TypeId)) {
+            return c.type_addresses[type_addr];
         }
 
         const default_name = if (die.tag == Dwarf.DW_TAG.structure_type or die.tag == Dwarf.DW_TAG.union_type) "" else "void";
@@ -680,22 +694,21 @@ const Context = struct {
             .ptr_count = ptr_count,
             .dimension = if (is_array) dimension else std.math.maxInt(@TypeOf(dimension)),
         });
-        try c.type_addresses.put(global_type_addr, id);
+        c.type_addresses[type_addr] = id;
 
         return id;
     }
 
     pub fn readTypeAtAddressAndSkip(c: *Context, type_addr: usize) !TypeId {
-        const global_type_addr = c.dwarf.toGlobalAddr(type_addr);
         const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
 
-        if (c.type_addresses.get(global_type_addr)) |id| {
+        if (c.type_addresses[type_addr] != std.math.maxInt(TypeId)) {
             // TODO(radomski): When the type is already cached we do not
             // read over the attrs, and that causes the upper function to
             // fail. We somehow need to skip the attrs if we already read
             // that type.
             c.dwarf.skipDieAttrs(die_id);
-            return id;
+            return c.type_addresses[type_addr];
         }
 
         const die = c.dwarf.dies.items[die_id];
@@ -771,7 +784,7 @@ const Context = struct {
             .ptr_count = ptr_count,
             .dimension = if (is_array) dimension else std.math.maxInt(@TypeOf(dimension)),
         });
-        try c.type_addresses.put(global_type_addr, id);
+        c.type_addresses[type_addr] = id;
 
         return id;
     }
@@ -801,7 +814,16 @@ const Context = struct {
                     const inner_die = c.dwarf.dies.items[inner_die_id];
                     if (inner_die.tag == Dwarf.DW_TAG.structure_type or inner_die.tag == Dwarf.DW_TAG.union_type) {
                         inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
-                        member_range = try c.readStructureMembers();
+                        const inner_type = c.types.items[inner_type_id];
+                        if (inner_type.struct_id != std.math.maxInt(StructId)) {
+                            member_range = switch (inner_type.struct_type) {
+                                .struct_type => c.structures.items[inner_type.struct_id].member_range,
+                                .union_type => c.unions.items[inner_type.struct_id].member_range,
+                                .none, .class_type => unreachable,
+                            };
+                        } else {
+                            member_range = try c.readStructureMembers();
+                        }
                     }
                 },
                 else => {
@@ -823,7 +845,7 @@ const Context = struct {
                     .ptr_count = c.types.items[inner_type_id].ptr_count,
                     .dimension = c.types.items[inner_type_id].dimension,
                 });
-                try c.type_addresses.put(c.dwarf.toGlobalAddr(typedef_address), id);
+                c.type_addresses[typedef_address] = id;
                 const container = Structure{ .type_id = id, .member_range = member_range };
                 switch (in_die.tag) {
                     Dwarf.DW_TAG.structure_type => {
@@ -873,30 +895,33 @@ const Context = struct {
         }
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
-
-            if (c.structure_types.get(member.type_id)) |struct_id| {
-                if (s.inline_structures.contains(struct_id)) {
-                    try c.printStructImpl(
-                        c.structures.items[struct_id],
-                        stdout,
-                        .Struct,
-                        left_pad + 2,
-                        member.mem_loc + mem_offset,
-                    );
-                    continue;
-                }
-            }
-            if (c.union_types.get(member.type_id)) |union_id| {
-                if (s.inline_unions.contains(union_id)) {
-                    try c.printStructImpl(
-                        c.unions.items[union_id],
-                        stdout,
-                        .Union,
-                        left_pad + 2,
-                        member.mem_loc + mem_offset,
-                    );
-                    continue;
-                }
+            switch (mtype.struct_type) {
+                .struct_type => {
+                    if (s.inline_structures.contains(mtype.struct_id)) {
+                        try c.printStructImpl(
+                            c.structures.items[mtype.struct_id],
+                            stdout,
+                            .Struct,
+                            left_pad + 2,
+                            member.mem_loc + mem_offset,
+                        );
+                        continue;
+                    }
+                },
+                .union_type => {
+                    if (s.inline_unions.contains(mtype.struct_id)) {
+                        try c.printStructImpl(
+                            c.unions.items[mtype.struct_id],
+                            stdout,
+                            .Union,
+                            left_pad + 2,
+                            member.mem_loc + mem_offset,
+                        );
+                        continue;
+                    }
+                },
+                .none => {},
+                .class_type => {},
             }
 
             try stdout.print("{s: >[4]} {s:*<[5]}{s: <[6]}{s}", .{
