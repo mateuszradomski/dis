@@ -646,11 +646,10 @@ const Context = struct {
             }
         }
 
-        var dimension: u32 = 1;
-        var is_array = false;
+        var dimension: u32 = std.math.maxInt(u32);
         if (die.tag == Dwarf.DW_TAG.array_type) {
+            dimension = 1;
             std.debug.assert(die.has_children);
-            is_array = true;
             while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
                 for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr| {
                     switch (child_attr.at) {
@@ -691,7 +690,7 @@ const Context = struct {
             .name = if (name) |n| n else default_name,
             .size = if (size) |s| s else 0,
             .ptr_count = ptr_count,
-            .dimension = if (is_array) dimension else std.math.maxInt(@TypeOf(dimension)),
+            .dimension = dimension,
         });
         c.type_addresses[type_addr] = id;
 
@@ -735,11 +734,10 @@ const Context = struct {
             }
         }
 
-        var dimension: u32 = 1;
-        var is_array = false;
+        var dimension: u32 = std.math.maxInt(u32);
         if (die.tag == Dwarf.DW_TAG.array_type) {
+            dimension = 1;
             std.debug.assert(die.has_children);
-            is_array = true;
             while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
                 for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr| {
                     switch (child_attr.at) {
@@ -780,7 +778,7 @@ const Context = struct {
             .name = if (name) |n| n else default_name,
             .size = if (size) |s| s else 0,
             .ptr_count = ptr_count,
-            .dimension = if (is_array) dimension else std.math.maxInt(@TypeOf(dimension)),
+            .dimension = dimension,
         });
         c.type_addresses[type_addr] = id;
 
