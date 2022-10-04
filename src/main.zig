@@ -261,6 +261,8 @@ pub fn Range(comptime T: type) type {
     };
 }
 
+const TypeError = Dwarf.Error || std.mem.Allocator.Error;
+
 const TypeId = u32;
 const Type = struct {
     name: []const u8,
@@ -614,100 +616,26 @@ const Context = struct {
         return MemberRange{ .start = @intCast(MemberId, start_index), .end = @intCast(MemberId, end_index) };
     }
 
-    pub fn readTypeAtAddressAndNoSkip(c: *Context, type_addr: usize) !TypeId {
+    pub fn readTypeAtAddressAndNoSkip(c: *Context, type_addr: usize) TypeError!TypeId {
         if (c.type_addresses[type_addr] != std.math.maxInt(TypeId)) {
             return c.type_addresses[type_addr];
         }
 
-        const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
-        const die = c.dwarf.dies.items[die_id];
-        const default_name = if (die.tag == Dwarf.DW_TAG.structure_type or die.tag == Dwarf.DW_TAG.union_type) "" else "void";
-
-        var name: ?[]const u8 = null;
-        var size: ?u32 = if (die.tag == Dwarf.DW_TAG.pointer_type) 8 else null;
-        var inner_type_id: ?u32 = null;
-        for (c.dwarf.getAttrs(die.attr_range)) |attr| {
-            switch (attr.at) {
-                Dwarf.DW_AT.name => {
-                    name = try c.dwarf.readString(attr.form);
-                },
-                Dwarf.DW_AT.byte_size => {
-                    size = @intCast(u32, try c.dwarf.readFormData(attr.form));
-                },
-                Dwarf.DW_AT.type => {
-                    const inner_type_address = @intCast(u32, try c.dwarf.readFormData(attr.form));
-                    c.dwarf.pushAddress();
-                    inner_type_id = try c.readTypeAtAddressAndNoSkip(inner_type_address);
-                    c.dwarf.popAddress();
-                },
-                else => {
-                    c.dwarf.skipFormData(attr.form);
-                },
-            }
-        }
-
-        var dimension: u32 = std.math.maxInt(u32);
-        if (die.tag == Dwarf.DW_TAG.array_type) {
-            dimension = 1;
-            std.debug.assert(die.has_children);
-            while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
-                for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr| {
-                    switch (child_attr.at) {
-                        Dwarf.DW_AT.upper_bound, Dwarf.DW_AT.count => {
-                            const array_dim = blk: {
-                                const val = @intCast(u64, try c.dwarf.readFormData(child_attr.form));
-                                if (val == std.math.maxInt(u64)) {
-                                    break :blk 0;
-                                } else {
-                                    break :blk val;
-                                }
-                            };
-                            dimension *= @intCast(u32, array_dim);
-                        },
-                        else => {
-                            c.dwarf.skipFormData(child_attr.form);
-                        },
-                    }
-                }
-            }
-        }
-
-        var ptr_count: u8 = if (die.tag == Dwarf.DW_TAG.pointer_type) 1 else 0;
-        if (inner_type_id) |inner_id| {
-            if (name == null) {
-                name = c.types.items[inner_id].name;
-            }
-            if (size == null) {
-                size = c.types.items[inner_id].size;
-            }
-
-            // TODO(radomski): check if needed
-            // dimension *= c.types.items[inner_id].dimension;
-            ptr_count += c.types.items[inner_id].ptr_count;
-        }
-
-        const id = try c.addType(Type{
-            .name = if (name) |n| n else default_name,
-            .size = if (size) |s| s else 0,
-            .ptr_count = ptr_count,
-            .dimension = dimension,
-        });
-        c.type_addresses[type_addr] = id;
-
-        return id;
+        return try c.readTypeAtAddressIfNotCached(type_addr);
     }
 
-    pub fn readTypeAtAddressAndSkip(c: *Context, type_addr: usize) !TypeId {
+    pub fn readTypeAtAddressAndSkip(c: *Context, type_addr: usize) TypeError!TypeId {
         const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
         if (c.type_addresses[type_addr] != std.math.maxInt(TypeId)) {
-            // TODO(radomski): When the type is already cached we do not
-            // read over the attrs, and that causes the upper function to
-            // fail. We somehow need to skip the attrs if we already read
-            // that type.
             c.dwarf.skipDieAttrs(die_id);
             return c.type_addresses[type_addr];
         }
 
+        return try c.readTypeAtAddressIfNotCached(type_addr);
+    }
+
+    pub fn readTypeAtAddressIfNotCached(c: *Context, type_addr: usize) TypeError!TypeId {
+        const die_id = try c.dwarf.readDieIdAtAddress(type_addr) orelse unreachable;
         const die = c.dwarf.dies.items[die_id];
         const default_name = if (die.tag == Dwarf.DW_TAG.structure_type or die.tag == Dwarf.DW_TAG.union_type) "" else "void";
 
@@ -769,8 +697,6 @@ const Context = struct {
                 size = c.types.items[inner_id].size;
             }
 
-            // TODO(radomski): check if needed
-            // dimension *= c.types.items[inner_id].dimension;
             ptr_count += c.types.items[inner_id].ptr_count;
         }
 

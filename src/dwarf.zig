@@ -311,7 +311,7 @@ const CompilationUnit = struct {
     die_range: DieRange,
 };
 
-const Error = error{
+pub const Error = error{
     EndOfBuffer,
 };
 
