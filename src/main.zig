@@ -779,7 +779,13 @@ const Context = struct {
                     .dimension = c.types.items[inner_type_id].dimension,
                 });
                 c.type_addresses[typedef_address] = id;
-                const container = Structure{ .type_id = id, .member_range = s.member_range };
+                const container = Structure{
+                    .type_id = id,
+                    .member_range = s.member_range,
+                    .inline_structures = s.inline_structures,
+                    .inline_unions = s.inline_unions,
+                };
+
                 const struct_id = switch (in_die.tag) {
                     Dwarf.DW_TAG.structure_type => try c.addStruct(container),
                     Dwarf.DW_TAG.union_type => try c.addUnion(container),
@@ -807,6 +813,7 @@ const Context = struct {
         container_type: ContainerType,
         left_pad: usize,
         mem_offset: usize,
+        member_name: []const u8,
     ) !void {
         const members = c.members.items[s.member_range.start..s.member_range.end];
 
@@ -814,6 +821,15 @@ const Context = struct {
         var member_name_pad: usize = 0;
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
+            const skip = switch (mtype.struct_type) {
+                .struct_type => s.inline_structures.contains(mtype.struct_id),
+                .union_type => s.inline_unions.contains(mtype.struct_id),
+                else => false,
+            };
+            if (skip) {
+                continue;
+            }
+
             type_name_pad = @maximum(type_name_pad, mtype.name.len + mtype.ptr_count);
             if (mtype.isArray()) {
                 member_name_pad = @maximum(member_name_pad, member.name.len + fmt.count("[{d}]", .{mtype.dimension}));
@@ -840,6 +856,7 @@ const Context = struct {
                             .Struct,
                             left_pad + 2,
                             member.mem_loc + mem_offset,
+                            member.name,
                         );
                         continue;
                     }
@@ -852,6 +869,7 @@ const Context = struct {
                             .Union,
                             left_pad + 2,
                             member.mem_loc + mem_offset,
+                            member.name,
                         );
                         continue;
                     }
@@ -883,7 +901,11 @@ const Context = struct {
                 member_name_pad - written,
             });
         }
-        try stdout.print("{s: <[1]}}};\n", .{ "", left_pad });
+        if (member_name.len > 0) {
+            try stdout.print("{s: <[2]}}} {s};\n", .{ "", member_name, left_pad });
+        } else {
+            try stdout.print("{s: <[1]}}};\n", .{ "", left_pad });
+        }
     }
 
     pub fn printStruct(
@@ -892,7 +914,7 @@ const Context = struct {
         stdout: anytype,
         container_type: ContainerType,
     ) !void {
-        try c.printStructImpl(s, stdout, container_type, 0, 0);
+        try c.printStructImpl(s, stdout, container_type, 0, 0, "");
     }
 
     pub fn printImpl(c: *Context, structures: []Structure, container_type: ContainerType) !void {
