@@ -423,23 +423,11 @@ const Context = struct {
                     const die = c.dwarf.dies.items[die_id];
 
                     switch (die.tag) {
-                        Dwarf.DW_TAG.structure_type => {
-                            const s = try c.parseStructure(die_addr);
-                            const id = try c.addStruct(s);
-                            c.types.items[s.type_id].struct_id = id;
-                            c.types.items[s.type_id].struct_type = .struct_type;
-                        },
-                        Dwarf.DW_TAG.union_type => {
-                            const s = try c.parseStructure(die_addr);
-                            const id = try c.addUnion(s);
-                            c.types.items[s.type_id].struct_id = id;
-                            c.types.items[s.type_id].struct_type = .union_type;
-                        },
-                        Dwarf.DW_TAG.class_type => {
-                            const s = try c.parseStructure(die_addr);
-                            const id = try c.addClass(s);
-                            c.types.items[s.type_id].struct_id = id;
-                            c.types.items[s.type_id].struct_type = .class_type;
+                        .structure_type,
+                        .union_type,
+                        .class_type,
+                        => {
+                            _ = try c.parseStructure(die_addr);
                         },
                         Dwarf.DW_TAG.typedef => {
                             try c.readTypedefAtAddress(die_addr);
@@ -479,6 +467,41 @@ const Context = struct {
 
     pub fn parseStructure(c: *Context, die_addr: usize) !Structure {
         const stype_id = try c.readTypeAtAddressAndSkip(die_addr);
+        const stype = c.types.items[stype_id];
+        if (stype.struct_id != std.math.maxInt(@TypeOf(stype.struct_id))) {
+            const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
+            try c.dwarf.skipDieAndChildren(die_id);
+            return switch (stype.struct_type) {
+                .struct_type => c.structures.items[stype.struct_id],
+                .union_type => c.unions.items[stype.struct_id],
+                .class_type => c.classes.items[stype.struct_id],
+                else => unreachable,
+            };
+        }
+
+        const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
+        const die = c.dwarf.dies.items[die_id];
+        const s = try c.parseStructureImpl(die_addr);
+
+        const id = try switch (die.tag) {
+            .structure_type => c.addStruct(s),
+            .union_type => c.addUnion(s),
+            .class_type => c.addClass(s),
+            else => unreachable,
+        };
+        c.types.items[s.type_id].struct_id = id;
+        c.types.items[s.type_id].struct_type = switch (die.tag) {
+            .structure_type => .struct_type,
+            .union_type => .union_type,
+            .class_type => .class_type,
+            else => unreachable,
+        };
+
+        return s;
+    }
+
+    pub fn parseStructureImpl(c: *Context, die_addr: usize) TypeError!Structure {
+        const stype_id = try c.readTypeAtAddressAndSkip(die_addr);
 
         const member_top_start = c.member_scratch_stack.top;
         defer c.member_scratch_stack.popTo(member_top_start);
@@ -488,43 +511,31 @@ const Context = struct {
         defer c.union_scratch_stack.popTo(union_top_start);
 
         while (c.dwarf.readNextDie()) |child_die_addr| {
-            const die_id = try c.dwarf.readDieIdAtAddress(child_die_addr) orelse break;
-            const die = c.dwarf.dies.items[die_id];
+            const child_die_id = try c.dwarf.readDieIdAtAddress(child_die_addr) orelse break;
+            const child_die = c.dwarf.dies.items[child_die_id];
 
-            switch (die.tag) {
+            switch (child_die.tag) {
                 Dwarf.DW_TAG.member => {
                     var member = std.mem.zeroes(StructMember);
-                    for (c.dwarf.getAttrs(die.attr_range)) |attr| {
+                    for (c.dwarf.getAttrs(child_die.attr_range)) |attr| {
                         switch (attr.at) {
-                            Dwarf.DW_AT.data_member_location => {
-                                member.mem_loc = @intCast(u32, try c.dwarf.readFormData(attr.form));
-                            },
-                            Dwarf.DW_AT.type => {
+                            .type => {
                                 const type_addr = @intCast(u32, try c.dwarf.readFormData(attr.form));
                                 c.dwarf.pushAddress();
                                 member.type_id = try c.readTypeAtAddressAndNoSkip(type_addr);
                                 c.dwarf.popAddress();
                             },
-                            Dwarf.DW_AT.name => {
-                                member.name = try c.dwarf.readString(attr.form);
-                            },
-                            else => {
-                                c.dwarf.skipFormData(attr.form);
-                            },
+                            .data_member_location => member.mem_loc = @intCast(u32, try c.dwarf.readFormData(attr.form)),
+                            .name => member.name = try c.dwarf.readString(attr.form),
+                            else => c.dwarf.skipFormData(attr.form),
                         }
                     }
 
                     c.member_scratch_stack.push(member);
                 },
-                Dwarf.DW_TAG.structure_type => {
-                    c.structure_scratch_stack.push(try c.parseStructure(child_die_addr));
-                },
-                Dwarf.DW_TAG.union_type => {
-                    c.union_scratch_stack.push(try c.parseStructure(child_die_addr));
-                },
-                else => {
-                    try c.dwarf.skipDieAndChildren(die_id);
-                },
+                .structure_type => c.structure_scratch_stack.push(try c.parseStructureImpl(child_die_addr)),
+                .union_type => c.union_scratch_stack.push(try c.parseStructureImpl(child_die_addr)),
+                else => try c.dwarf.skipDieAndChildren(child_die_id),
             }
         }
 
@@ -718,7 +729,7 @@ const Context = struct {
         var name: []const u8 = "";
         var inner_type_address_opt: ?usize = null;
         var inner_type_id: TypeId = 0;
-        var member_range: MemberRange = undefined;
+        var s: Structure = undefined;
 
         for (c.dwarf.getAttrs(die.attr_range)) |attr| {
             switch (attr.at) {
@@ -738,13 +749,13 @@ const Context = struct {
                         inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
                         const inner_type = c.types.items[inner_type_id];
                         if (inner_type.struct_id != std.math.maxInt(StructId)) {
-                            member_range = switch (inner_type.struct_type) {
-                                .struct_type => c.structures.items[inner_type.struct_id].member_range,
-                                .union_type => c.unions.items[inner_type.struct_id].member_range,
+                            s = switch (inner_type.struct_type) {
+                                .struct_type => c.structures.items[inner_type.struct_id],
+                                .union_type => c.unions.items[inner_type.struct_id],
                                 .none, .class_type => unreachable,
                             };
                         } else {
-                            member_range = try c.readStructureMembers();
+                            s = try c.parseStructure(inner_type_address);
                         }
                     }
                 },
@@ -768,16 +779,19 @@ const Context = struct {
                     .dimension = c.types.items[inner_type_id].dimension,
                 });
                 c.type_addresses[typedef_address] = id;
-                const container = Structure{ .type_id = id, .member_range = member_range };
-                switch (in_die.tag) {
-                    Dwarf.DW_TAG.structure_type => {
-                        try c.structures.append(container);
-                    },
-                    Dwarf.DW_TAG.union_type => {
-                        try c.unions.append(container);
-                    },
+                const container = Structure{ .type_id = id, .member_range = s.member_range };
+                const struct_id = switch (in_die.tag) {
+                    Dwarf.DW_TAG.structure_type => try c.addStruct(container),
+                    Dwarf.DW_TAG.union_type => try c.addUnion(container),
                     else => unreachable,
-                }
+                };
+                c.types.items[id].struct_id = struct_id;
+                c.types.items[id].struct_type = switch (in_die.tag) {
+                    .structure_type => .struct_type,
+                    .union_type => .union_type,
+                    .class_type => .class_type,
+                    else => unreachable,
+                };
             } else {
                 return;
             }
