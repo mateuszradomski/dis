@@ -320,6 +320,13 @@ const ContainerType = enum(u8) {
     }
 };
 
+const Namespace = struct {
+    name: []const u8,
+    struct_range: StructRange,
+    union_range: StructRange,
+    class_range: StructRange,
+};
+
 pub fn Stack(comptime T: type) type {
     return struct {
         mem: []T,
@@ -356,9 +363,11 @@ const Context = struct {
     unions: std.ArrayList(Structure),
     classes: std.ArrayList(Structure),
     members: std.ArrayList(StructMember),
+    namespaces: std.ArrayListUnmanaged(Namespace) = .{},
     dwarf: Dwarf,
 
     gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
 
     member_scratch_stack: Stack(StructMember),
     structure_scratch_stack: Stack(Structure),
@@ -374,6 +383,7 @@ const Context = struct {
             .members = std.ArrayList(StructMember).init(allocator),
             .dwarf = dwarf,
             .gpa = allocator,
+            .arena = allocator,
 
             .member_scratch_stack = try Stack(StructMember).init(16 * 1024, allocator),
             .structure_scratch_stack = try Stack(Structure).init(4 * 1024, allocator),
@@ -421,28 +431,7 @@ const Context = struct {
             for (c.dwarf.cus.items) |cu| {
                 c.dwarf.setCu(cu);
 
-                while (c.dwarf.readNextDie()) |die_addr| {
-                    const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse continue;
-                    const die = c.dwarf.dies.items[die_id];
-
-                    switch (die.tag) {
-                        .structure_type,
-                        .union_type,
-                        .class_type,
-                        => {
-                            _ = try c.parseStructure(die_addr);
-                        },
-                        Dwarf.DW_TAG.typedef => {
-                            try c.readTypedefAtAddress(die_addr);
-                        },
-                        Dwarf.DW_TAG.compile_unit => {
-                            c.dwarf.skipDieAttrs(die_id);
-                        },
-                        else => {
-                            try c.dwarf.skipDieAndChildren(die_id);
-                        },
-                    }
-                }
+                try c.readChildren();
 
                 std.mem.set(TypeId, c.type_addresses[0 .. cu.size + cu.unit_length], std.math.maxInt(TypeId));
             }
@@ -454,9 +443,7 @@ const Context = struct {
 
         {
             var timer = try std.time.Timer.start();
-            try c.printStructures();
-            try c.printUnions();
-            try c.printClasses();
+            try c.printContainers();
             const ns = timer.read();
             std.debug.print("Printing: {}\n", .{std.fmt.fmtDuration(ns)});
         }
@@ -466,6 +453,65 @@ const Context = struct {
         std.log.debug("unions {}/{}", .{ c.unions.items.len, fmt.fmtIntSizeDec(c.unions.items.len * @sizeOf(Structure)) });
         std.log.debug("classes {}/{}", .{ c.classes.items.len, fmt.fmtIntSizeDec(c.classes.items.len * @sizeOf(Structure)) });
         std.log.debug("members {}/{}", .{ c.members.items.len, fmt.fmtIntSizeDec(c.members.items.len * @sizeOf(StructMember)) });
+    }
+
+    pub fn readChildren(c: *Context) !void {
+        while (c.dwarf.readNextDie()) |die_addr| {
+            const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse continue;
+            const die = c.dwarf.dies.items[die_id];
+
+            switch (die.tag) {
+                .structure_type,
+                .union_type,
+                .class_type,
+                => {
+                    _ = try c.parseStructure(die_addr);
+                },
+                Dwarf.DW_TAG.typedef => {
+                    try c.readTypedefAtAddress(die_addr);
+                },
+                Dwarf.DW_TAG.namespace => {
+                    var namespace = try c.readNamespace(die_addr);
+                    try c.readChildren();
+                    namespace.struct_range.end = @intCast(u32, c.structures.items.len);
+                    namespace.union_range.end = @intCast(u32, c.unions.items.len);
+                    namespace.class_range.end = @intCast(u32, c.classes.items.len);
+                    try c.namespaces.append(c.arena, namespace);
+                },
+                Dwarf.DW_TAG.compile_unit => {
+                    c.dwarf.skipDieAttrs(die_id);
+                },
+                else => {
+                    try c.dwarf.skipDieAndChildren(die_id);
+                },
+            }
+        }
+    }
+
+    pub fn readNamespace(c: *Context, die_addr: usize) !Namespace {
+        const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
+        const die = c.dwarf.dies.items[die_id];
+        const name = blk: {
+            var name: []const u8 = undefined;
+
+            for (c.dwarf.getAttrs(die.attr_range)) |attr| {
+                switch (attr.at) {
+                    .name => {
+                        name = try c.dwarf.readString(attr.form);
+                    },
+                    else => c.dwarf.skipFormData(attr.form),
+                }
+            }
+
+            break :blk name;
+        };
+
+        return Namespace{
+            .name = name,
+            .struct_range = .{ .start = @intCast(u32, c.structures.items.len) },
+            .union_range = .{ .start = @intCast(u32, c.unions.items.len) },
+            .class_range = .{ .start = @intCast(u32, c.classes.items.len) },
+        };
     }
 
     pub fn parseStructure(c: *Context, die_addr: usize) !Structure {
@@ -828,6 +874,7 @@ const Context = struct {
 
     pub fn printStructImpl(
         c: *Context,
+        sid: StructId,
         s: Structure,
         stdout: anytype,
         container_type: ContainerType,
@@ -864,7 +911,24 @@ const Context = struct {
         if (stype.name.len == 0) {
             try stdout.print("{s: >[2]} {{ // size={}\n", .{ container_prefix, stype.size, left_pad + container_prefix.len });
         } else {
-            try stdout.print("{s: >[3]} {s} {{ // size={}\n", .{ container_prefix, stype.name, stype.size, left_pad + container_prefix.len });
+            try stdout.print("{s: >[1]} ", .{ container_prefix, left_pad + container_prefix.len });
+            if (c.namespaces.items.len > 0) {
+                var ni = c.namespaces.items.len;
+                while (ni > 0) {
+                    ni -= 1;
+                    const ns = c.namespaces.items[ni];
+                    const in = switch (container_type) {
+                        .Struct => ns.struct_range.contains(sid),
+                        .Union => ns.union_range.contains(sid),
+                        .Class => ns.class_range.contains(sid),
+                    };
+
+                    if (in) {
+                        try stdout.print("{s}::", .{ns.name});
+                    }
+                }
+            }
+            try stdout.print("{s} {{ // size={}\n", .{ stype.name, stype.size });
         }
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
@@ -872,6 +936,7 @@ const Context = struct {
                 .struct_type => {
                     if (s.inline_structures.contains(mtype.struct_id)) {
                         try c.printStructImpl(
+                            mtype.struct_id,
                             c.structures.items[mtype.struct_id],
                             stdout,
                             .Struct,
@@ -885,6 +950,7 @@ const Context = struct {
                 .union_type => {
                     if (s.inline_unions.contains(mtype.struct_id)) {
                         try c.printStructImpl(
+                            mtype.struct_id,
                             c.unions.items[mtype.struct_id],
                             stdout,
                             .Union,
@@ -898,6 +964,7 @@ const Context = struct {
                 .class_type => {
                     if (s.inline_classes.contains(mtype.struct_id)) {
                         try c.printStructImpl(
+                            mtype.struct_id,
                             c.classes.items[mtype.struct_id],
                             stdout,
                             .Class,
@@ -943,38 +1010,41 @@ const Context = struct {
 
     pub fn printStruct(
         c: *Context,
+        sid: StructId,
         s: Structure,
         stdout: anytype,
         container_type: ContainerType,
     ) !void {
-        try c.printStructImpl(s, stdout, container_type, 0, 0, "");
+        try c.printStructImpl(sid, s, stdout, container_type, 0, 0, "");
     }
 
-    pub fn printImpl(c: *Context, structures: []Structure, container_type: ContainerType) !void {
+    pub fn printContainers(c: *Context) !void {
         const stdout_file = std.io.getStdOut().writer();
         var bw = std.io.BufferedWriter(MegaByte, @TypeOf(stdout_file)){ .unbuffered_writer = stdout_file };
         const stdout = bw.writer();
 
-        for (structures) |s| {
+        for (c.structures.items) |s, sid| {
             const stype = c.types.items[s.type_id];
             if (stype.size > 0 and stype.name.len > 0) {
-                try c.printStruct(s, stdout, container_type);
+                try c.printStruct(@intCast(u32, sid), s, stdout, .Struct);
+            }
+        }
+
+        for (c.unions.items) |s, sid| {
+            const stype = c.types.items[s.type_id];
+            if (stype.size > 0 and stype.name.len > 0) {
+                try c.printStruct(@intCast(u32, sid), s, stdout, .Union);
+            }
+        }
+
+        for (c.classes.items) |s, sid| {
+            const stype = c.types.items[s.type_id];
+            if (stype.size > 0 and stype.name.len > 0) {
+                try c.printStruct(@intCast(StructId, sid), s, stdout, .Class);
             }
         }
 
         try bw.flush();
-    }
-
-    pub fn printStructures(c: *Context) !void {
-        try c.printImpl(c.structures.items, .Struct);
-    }
-
-    pub fn printUnions(c: *Context) !void {
-        try c.printImpl(c.unions.items, .Union);
-    }
-
-    pub fn printClasses(c: *Context) !void {
-        try c.printImpl(c.classes.items, .Class);
     }
 };
 
