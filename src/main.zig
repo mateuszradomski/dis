@@ -271,7 +271,10 @@ const Context = struct {
             for (c.dwarf.cus.items) |cu| {
                 c.dwarf.setCu(cu);
 
-                try c.readChildren();
+                // TODO(radomski): Kinda stupid?
+                while (c.dwarf.debug_info.isGood()) {
+                    try c.readChildren();
+                }
 
                 mem.set(TypeId, c.type_addresses[0 .. cu.size + cu.unit_length], std.math.maxInt(TypeId));
             }
@@ -295,7 +298,7 @@ const Context = struct {
 
     pub fn readChildren(c: *Context) !void {
         while (c.dwarf.readNextDie()) |die_addr| {
-            const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse continue;
+            const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse break;
             const die = c.dwarf.dies.items[die_id];
 
             switch (die.tag) {
@@ -374,6 +377,8 @@ const Context = struct {
     }
 
     pub fn parseStructureImpl(c: *Context, die_addr: usize) TypeError!Structure {
+        const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
+        const die = c.dwarf.dies.items[die_id];
         const stype_id = try c.readTypeAtAddressAndSkip(die_addr);
 
         const member_top_start = c.member_scratch_stack.top;
@@ -381,45 +386,47 @@ const Context = struct {
         const structure_top_start = c.structure_scratch_stack.top;
         defer c.structure_scratch_stack.popTo(structure_top_start);
 
-        while (c.dwarf.readNextDie()) |child_die_addr| {
-            const child_die_id = try c.dwarf.readDieIdAtAddress(child_die_addr) orelse break;
-            const child_die = c.dwarf.dies.items[child_die_id];
+        if (die.has_children) {
+            while (c.dwarf.readNextDie()) |child_die_addr| {
+                const child_die_id = try c.dwarf.readDieIdAtAddress(child_die_addr) orelse break;
+                const child_die = c.dwarf.dies.items[child_die_id];
 
-            switch (child_die.tag) {
-                Dwarf.DW_TAG.member => {
-                    var member = mem.zeroes(StructMember);
-                    for (c.dwarf.getAttrs(child_die.attr_range)) |attr| {
-                        switch (attr.at) {
-                            .type => {
-                                const type_addr = @intCast(u32, try c.dwarf.readFormData(attr.form));
-                                c.dwarf.pushAddress();
-                                member.type_id = try c.readTypeAtAddressAndNoSkip(type_addr);
-                                c.dwarf.popAddress();
-                            },
-                            .data_member_location => member.mem_loc = @intCast(u32, try c.dwarf.readFormData(attr.form)),
-                            .name => member.name = try c.dwarf.readString(attr.form),
-                            else => c.dwarf.skipFormData(attr.form),
+                switch (child_die.tag) {
+                    Dwarf.DW_TAG.member => {
+                        var member = mem.zeroes(StructMember);
+                        for (c.dwarf.getAttrs(child_die.attr_range)) |attr| {
+                            switch (attr.at) {
+                                .type => {
+                                    const type_addr = @intCast(u32, try c.dwarf.readFormData(attr.form));
+                                    c.dwarf.pushAddress();
+                                    member.type_id = try c.readTypeAtAddressAndNoSkip(type_addr);
+                                    c.dwarf.popAddress();
+                                },
+                                .data_member_location => member.mem_loc = @intCast(u32, try c.dwarf.readFormData(attr.form)),
+                                .name => member.name = try c.dwarf.readString(attr.form),
+                                else => c.dwarf.skipFormData(attr.form),
+                            }
                         }
-                    }
 
-                    c.member_scratch_stack.push(member);
-                },
-                .structure_type => {
-                    const s = try c.parseStructureImpl(child_die_addr);
-                    c.types.items[s.type_id].struct_type = .struct_type;
-                    c.structure_scratch_stack.push(s);
-                },
-                .union_type => {
-                    const s = try c.parseStructureImpl(child_die_addr);
-                    c.types.items[s.type_id].struct_type = .union_type;
-                    c.structure_scratch_stack.push(s);
-                },
-                .class_type => {
-                    const s = try c.parseStructureImpl(child_die_addr);
-                    c.types.items[s.type_id].struct_type = .class_type;
-                    c.structure_scratch_stack.push(s);
-                },
-                else => try c.dwarf.skipDieAndChildren(child_die_id),
+                        c.member_scratch_stack.push(member);
+                    },
+                    .structure_type => {
+                        const s = try c.parseStructureImpl(child_die_addr);
+                        c.types.items[s.type_id].struct_type = .struct_type;
+                        c.structure_scratch_stack.push(s);
+                    },
+                    .union_type => {
+                        const s = try c.parseStructureImpl(child_die_addr);
+                        c.types.items[s.type_id].struct_type = .union_type;
+                        c.structure_scratch_stack.push(s);
+                    },
+                    .class_type => {
+                        const s = try c.parseStructureImpl(child_die_addr);
+                        c.types.items[s.type_id].struct_type = .class_type;
+                        c.structure_scratch_stack.push(s);
+                    },
+                    else => try c.dwarf.skipDieAndChildren(child_die_id),
+                }
             }
         }
 
