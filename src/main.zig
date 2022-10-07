@@ -300,31 +300,11 @@ const Structure = struct {
     type_id: TypeId,
     member_range: MemberRange,
     inline_structures: StructRange = .{},
-    inline_unions: StructRange = .{},
-    inline_classes: StructRange = .{},
-};
-
-const ContainerType = enum(u8) {
-    Struct,
-    Union,
-    Class,
-
-    const Self = @This();
-
-    pub fn getPrefix(self: Self) []const u8 {
-        return switch (self) {
-            .Struct => "struct",
-            .Union => "union",
-            .Class => "class",
-        };
-    }
 };
 
 const Namespace = struct {
     name: []const u8,
     struct_range: StructRange,
-    union_range: StructRange,
-    class_range: StructRange,
 };
 
 pub fn Stack(comptime T: type) type {
@@ -360,8 +340,6 @@ const Context = struct {
     types: std.ArrayList(Type),
     type_addresses: []TypeId = &[_]TypeId{},
     structures: std.ArrayList(Structure),
-    unions: std.ArrayList(Structure),
-    classes: std.ArrayList(Structure),
     members: std.ArrayList(StructMember),
     namespaces: std.ArrayListUnmanaged(Namespace) = .{},
     dwarf: Dwarf,
@@ -371,15 +349,11 @@ const Context = struct {
 
     member_scratch_stack: Stack(StructMember),
     structure_scratch_stack: Stack(Structure),
-    union_scratch_stack: Stack(Structure),
-    class_scratch_stack: Stack(Structure),
 
     pub fn init(allocator: std.mem.Allocator, dwarf: Dwarf) !Self {
         var c = Context{
             .types = std.ArrayList(Type).init(allocator),
             .structures = std.ArrayList(Structure).init(allocator),
-            .unions = std.ArrayList(Structure).init(allocator),
-            .classes = std.ArrayList(Structure).init(allocator),
             .members = std.ArrayList(StructMember).init(allocator),
             .dwarf = dwarf,
             .gpa = allocator,
@@ -387,8 +361,6 @@ const Context = struct {
 
             .member_scratch_stack = try Stack(StructMember).init(16 * 1024, allocator),
             .structure_scratch_stack = try Stack(Structure).init(4 * 1024, allocator),
-            .union_scratch_stack = try Stack(Structure).init(4 * 1024, allocator),
-            .class_scratch_stack = try Stack(Structure).init(4 * 1024, allocator),
         };
 
         return c;
@@ -403,18 +375,6 @@ const Context = struct {
     pub fn addStruct(c: *Self, s: Structure) !StructId {
         const id = @intCast(StructId, c.structures.items.len);
         try c.structures.append(s);
-        return id;
-    }
-
-    pub fn addUnion(c: *Self, s: Structure) !StructId {
-        const id = @intCast(StructId, c.unions.items.len);
-        try c.unions.append(s);
-        return id;
-    }
-
-    pub fn addClass(c: *Self, s: Structure) !StructId {
-        const id = @intCast(StructId, c.classes.items.len);
-        try c.classes.append(s);
         return id;
     }
 
@@ -450,8 +410,6 @@ const Context = struct {
 
         std.log.debug("types {}/{}", .{ c.types.items.len, fmt.fmtIntSizeDec(c.types.items.len * @sizeOf(Type)) });
         std.log.debug("structures {}/{}", .{ c.structures.items.len, fmt.fmtIntSizeDec(c.structures.items.len * @sizeOf(Structure)) });
-        std.log.debug("unions {}/{}", .{ c.unions.items.len, fmt.fmtIntSizeDec(c.unions.items.len * @sizeOf(Structure)) });
-        std.log.debug("classes {}/{}", .{ c.classes.items.len, fmt.fmtIntSizeDec(c.classes.items.len * @sizeOf(Structure)) });
         std.log.debug("members {}/{}", .{ c.members.items.len, fmt.fmtIntSizeDec(c.members.items.len * @sizeOf(StructMember)) });
     }
 
@@ -474,8 +432,6 @@ const Context = struct {
                     var namespace = try c.readNamespace(die_addr);
                     try c.readChildren();
                     namespace.struct_range.end = @intCast(u32, c.structures.items.len);
-                    namespace.union_range.end = @intCast(u32, c.unions.items.len);
-                    namespace.class_range.end = @intCast(u32, c.classes.items.len);
                     try c.namespaces.append(c.arena, namespace);
                 },
                 Dwarf.DW_TAG.compile_unit => {
@@ -509,8 +465,6 @@ const Context = struct {
         return Namespace{
             .name = name,
             .struct_range = .{ .start = @intCast(u32, c.structures.items.len) },
-            .union_range = .{ .start = @intCast(u32, c.unions.items.len) },
-            .class_range = .{ .start = @intCast(u32, c.classes.items.len) },
         };
     }
 
@@ -520,24 +474,14 @@ const Context = struct {
         if (stype.struct_id != std.math.maxInt(@TypeOf(stype.struct_id))) {
             const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
             try c.dwarf.skipDieAndChildren(die_id);
-            return switch (stype.struct_type) {
-                .struct_type => c.structures.items[stype.struct_id],
-                .union_type => c.unions.items[stype.struct_id],
-                .class_type => c.classes.items[stype.struct_id],
-                else => unreachable,
-            };
+            return c.structures.items[stype.struct_id];
         }
 
         const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
         const die = c.dwarf.dies.items[die_id];
         const s = try c.parseStructureImpl(die_addr);
 
-        const id = try switch (die.tag) {
-            .structure_type => c.addStruct(s),
-            .union_type => c.addUnion(s),
-            .class_type => c.addClass(s),
-            else => unreachable,
-        };
+        const id = try c.addStruct(s);
         c.types.items[s.type_id].struct_id = id;
         c.types.items[s.type_id].struct_type = switch (die.tag) {
             .structure_type => .struct_type,
@@ -556,10 +500,6 @@ const Context = struct {
         defer c.member_scratch_stack.popTo(member_top_start);
         const structure_top_start = c.structure_scratch_stack.top;
         defer c.structure_scratch_stack.popTo(structure_top_start);
-        const union_top_start = c.union_scratch_stack.top;
-        defer c.union_scratch_stack.popTo(union_top_start);
-        const class_top_start = c.class_scratch_stack.top;
-        defer c.class_scratch_stack.popTo(class_top_start);
 
         while (c.dwarf.readNextDie()) |child_die_addr| {
             const child_die_id = try c.dwarf.readDieIdAtAddress(child_die_addr) orelse break;
@@ -584,9 +524,21 @@ const Context = struct {
 
                     c.member_scratch_stack.push(member);
                 },
-                .structure_type => c.structure_scratch_stack.push(try c.parseStructureImpl(child_die_addr)),
-                .union_type => c.union_scratch_stack.push(try c.parseStructureImpl(child_die_addr)),
-                .class_type => c.class_scratch_stack.push(try c.parseStructureImpl(child_die_addr)),
+                .structure_type => {
+                    const s = try c.parseStructureImpl(child_die_addr);
+                    c.types.items[s.type_id].struct_type = .struct_type;
+                    c.structure_scratch_stack.push(s);
+                },
+                .union_type => {
+                    const s = try c.parseStructureImpl(child_die_addr);
+                    c.types.items[s.type_id].struct_type = .union_type;
+                    c.structure_scratch_stack.push(s);
+                },
+                .class_type => {
+                    const s = try c.parseStructureImpl(child_die_addr);
+                    c.types.items[s.type_id].struct_type = .class_type;
+                    c.structure_scratch_stack.push(s);
+                },
                 else => try c.dwarf.skipDieAndChildren(child_die_id),
             }
         }
@@ -599,25 +551,8 @@ const Context = struct {
         for (c.structure_scratch_stack.sliceFrom(structure_top_start)) |s| {
             const id = try c.addStruct(s);
             c.types.items[s.type_id].struct_id = id;
-            c.types.items[s.type_id].struct_type = .struct_type;
         }
         const struct_end_id = c.structures.items.len;
-
-        const union_start_id = c.unions.items.len;
-        for (c.union_scratch_stack.sliceFrom(union_top_start)) |s| {
-            const id = try c.addUnion(s);
-            c.types.items[s.type_id].struct_id = id;
-            c.types.items[s.type_id].struct_type = .union_type;
-        }
-        const union_end_id = c.unions.items.len;
-
-        const class_start_id = c.classes.items.len;
-        for (c.class_scratch_stack.sliceFrom(class_top_start)) |s| {
-            const id = try c.addClass(s);
-            c.types.items[s.type_id].struct_id = id;
-            c.types.items[s.type_id].struct_type = .class_type;
-        }
-        const class_end_id = c.classes.items.len;
 
         const structure = Structure{
             .type_id = stype_id,
@@ -628,14 +563,6 @@ const Context = struct {
             .inline_structures = StructRange{
                 .start = @intCast(StructId, struct_start_id),
                 .end = @intCast(StructId, struct_end_id),
-            },
-            .inline_unions = StructRange{
-                .start = @intCast(StructId, union_start_id),
-                .end = @intCast(StructId, union_end_id),
-            },
-            .inline_classes = StructRange{
-                .start = @intCast(StructId, class_start_id),
-                .end = @intCast(StructId, class_end_id),
             },
         };
 
@@ -813,12 +740,7 @@ const Context = struct {
                         inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
                         const inner_type = c.types.items[inner_type_id];
                         if (inner_type.struct_id != std.math.maxInt(StructId)) {
-                            s = switch (inner_type.struct_type) {
-                                .struct_type => c.structures.items[inner_type.struct_id],
-                                .union_type => c.unions.items[inner_type.struct_id],
-                                .class_type => c.classes.items[inner_type.struct_id],
-                                .none => unreachable,
-                            };
+                            s = c.structures.items[inner_type.struct_id];
                         } else {
                             s = try c.parseStructure(inner_type_address);
                         }
@@ -848,15 +770,9 @@ const Context = struct {
                     .type_id = id,
                     .member_range = s.member_range,
                     .inline_structures = s.inline_structures,
-                    .inline_unions = s.inline_unions,
                 };
 
-                const struct_id = switch (in_die.tag) {
-                    .structure_type => try c.addStruct(container),
-                    .union_type => try c.addUnion(container),
-                    .class_type => try c.addClass(container),
-                    else => unreachable,
-                };
+                const struct_id = try c.addStruct(container);
                 c.types.items[id].struct_id = struct_id;
                 c.types.items[id].struct_type = switch (in_die.tag) {
                     .structure_type => .struct_type,
@@ -877,7 +793,6 @@ const Context = struct {
         sid: StructId,
         s: Structure,
         stdout: anytype,
-        container_type: ContainerType,
         left_pad: usize,
         mem_offset: usize,
         member_name: []const u8,
@@ -888,12 +803,7 @@ const Context = struct {
         var member_name_pad: usize = 0;
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
-            const skip = switch (mtype.struct_type) {
-                .struct_type => s.inline_structures.contains(mtype.struct_id),
-                .union_type => s.inline_unions.contains(mtype.struct_id),
-                .class_type => s.inline_classes.contains(mtype.struct_id),
-                else => false,
-            };
+            const skip = s.inline_structures.contains(mtype.struct_id);
             if (skip) {
                 continue;
             }
@@ -907,7 +817,12 @@ const Context = struct {
         }
 
         const stype = c.types.items[s.type_id];
-        const container_prefix = container_type.getPrefix();
+        const container_prefix = switch (stype.struct_type) {
+            .struct_type => "struct",
+            .union_type => "union",
+            .class_type => "class",
+            else => unreachable,
+        };
         if (stype.name.len == 0) {
             try stdout.print("{s: >[2]} {{ // size={}\n", .{ container_prefix, stype.size, left_pad + container_prefix.len });
         } else {
@@ -917,11 +832,7 @@ const Context = struct {
                 while (ni > 0) {
                     ni -= 1;
                     const ns = c.namespaces.items[ni];
-                    const in = switch (container_type) {
-                        .Struct => ns.struct_range.contains(sid),
-                        .Union => ns.union_range.contains(sid),
-                        .Class => ns.class_range.contains(sid),
-                    };
+                    const in = ns.struct_range.contains(sid);
 
                     if (in) {
                         try stdout.print("{s}::", .{ns.name});
@@ -932,50 +843,16 @@ const Context = struct {
         }
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
-            switch (mtype.struct_type) {
-                .struct_type => {
-                    if (s.inline_structures.contains(mtype.struct_id)) {
-                        try c.printStructImpl(
-                            mtype.struct_id,
-                            c.structures.items[mtype.struct_id],
-                            stdout,
-                            .Struct,
-                            left_pad + 2,
-                            member.mem_loc + mem_offset,
-                            member.name,
-                        );
-                        continue;
-                    }
-                },
-                .union_type => {
-                    if (s.inline_unions.contains(mtype.struct_id)) {
-                        try c.printStructImpl(
-                            mtype.struct_id,
-                            c.unions.items[mtype.struct_id],
-                            stdout,
-                            .Union,
-                            left_pad + 2,
-                            member.mem_loc + mem_offset,
-                            member.name,
-                        );
-                        continue;
-                    }
-                },
-                .class_type => {
-                    if (s.inline_classes.contains(mtype.struct_id)) {
-                        try c.printStructImpl(
-                            mtype.struct_id,
-                            c.classes.items[mtype.struct_id],
-                            stdout,
-                            .Class,
-                            left_pad + 2,
-                            member.mem_loc + mem_offset,
-                            member.name,
-                        );
-                        continue;
-                    }
-                },
-                .none => {},
+            if (s.inline_structures.contains(mtype.struct_id)) {
+                try c.printStructImpl(
+                    mtype.struct_id,
+                    c.structures.items[mtype.struct_id],
+                    stdout,
+                    left_pad + 2,
+                    member.mem_loc + mem_offset,
+                    member.name,
+                );
+                continue;
             }
 
             try stdout.print("{s: >[4]} {s:*<[5]}{s: <[6]}{s}", .{
@@ -1013,9 +890,8 @@ const Context = struct {
         sid: StructId,
         s: Structure,
         stdout: anytype,
-        container_type: ContainerType,
     ) !void {
-        try c.printStructImpl(sid, s, stdout, container_type, 0, 0, "");
+        try c.printStructImpl(sid, s, stdout, 0, 0, "");
     }
 
     pub fn printContainers(c: *Context) !void {
@@ -1026,21 +902,7 @@ const Context = struct {
         for (c.structures.items) |s, sid| {
             const stype = c.types.items[s.type_id];
             if (stype.size > 0 and stype.name.len > 0) {
-                try c.printStruct(@intCast(u32, sid), s, stdout, .Struct);
-            }
-        }
-
-        for (c.unions.items) |s, sid| {
-            const stype = c.types.items[s.type_id];
-            if (stype.size > 0 and stype.name.len > 0) {
-                try c.printStruct(@intCast(u32, sid), s, stdout, .Union);
-            }
-        }
-
-        for (c.classes.items) |s, sid| {
-            const stype = c.types.items[s.type_id];
-            if (stype.size > 0 and stype.name.len > 0) {
-                try c.printStruct(@intCast(StructId, sid), s, stdout, .Class);
+                try c.printStruct(@intCast(u32, sid), s, stdout);
             }
         }
 

@@ -13,6 +13,10 @@ int t(u u) {
     return u.c.field1;
 }
 
+//class c { // size=8
+//  int field1; // size=4, offset=0
+//  int field2; // size=4, offset=4
+//};
 //union u { // size=8
 //  class c { // size=8
 //    int field1; // size=4, offset=0
@@ -20,8 +24,4 @@ int t(u u) {
 //  } c;
 //  int   i; // size=4, offset=0
 //  float f; // size=4, offset=0
-//};
-//class c { // size=8
-//  int field1; // size=4, offset=0
-//  int field2; // size=4, offset=4
 //};
