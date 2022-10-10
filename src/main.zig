@@ -306,7 +306,7 @@ const Context = struct {
                 .union_type,
                 .class_type,
                 => {
-                    _ = try c.parseStructure(die_addr, die_id);
+                    _ = try c.parseStructure(die_addr, die_id, die.tag);
                 },
                 Dwarf.DW_TAG.typedef => {
                     try c.readTypedefAtAddress(die_addr);
@@ -351,7 +351,7 @@ const Context = struct {
         };
     }
 
-    pub fn parseStructure(c: *Context, die_addr: usize, die_id: Dwarf.DieId) !Structure {
+    pub fn parseStructure(c: *Context, die_addr: usize, die_id: Dwarf.DieId, tag: Dwarf.DW_TAG) !Structure {
         const stype_id = try c.readTypeAtAddressAndNoSkip(die_addr);
         const stype = c.types.items[stype_id];
         if (stype.struct_id != std.math.maxInt(@TypeOf(stype.struct_id))) {
@@ -359,12 +359,11 @@ const Context = struct {
             return c.structures.items[stype.struct_id];
         }
 
-        const die = c.dwarf.dies.items[die_id];
         const s = try c.parseStructureImpl(die_addr, die_id);
 
         const id = try c.addStruct(s);
         c.types.items[s.type_id].struct_id = id;
-        c.types.items[s.type_id].struct_type = switch (die.tag) {
+        c.types.items[s.type_id].struct_type = switch (tag) {
             .structure_type => .struct_type,
             .union_type => .union_type,
             .class_type => .class_type,
@@ -577,7 +576,7 @@ const Context = struct {
                         if (inner_type.struct_id != InvalidStructId) {
                             s = c.structures.items[inner_type.struct_id];
                         } else {
-                            s = try c.parseStructure(inner_type_address, inner_die_id);
+                            s = try c.parseStructure(inner_type_address, inner_die_id, inner_die.tag);
                         }
                     }
                 },
