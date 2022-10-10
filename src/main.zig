@@ -555,6 +555,7 @@ const Context = struct {
         var inner_type_address_opt: ?usize = null;
         var inner_type_id: TypeId = 0;
         var s: Structure = undefined;
+        var container_type: Type.StructType = .none;
 
         for (c.dwarf.getAttrs(die.attr_range)) |attr| {
             switch (attr.at) {
@@ -570,7 +571,13 @@ const Context = struct {
 
                     const inner_die_id = try c.dwarf.readDieIdAtAddress(inner_type_address) orelse unreachable;
                     const inner_die = c.dwarf.dies.items[inner_die_id];
-                    if (inner_die.tag == .structure_type or inner_die.tag == .union_type or inner_die.tag == .class_type) {
+                    container_type = switch (inner_die.tag) {
+                        .structure_type => .struct_type,
+                        .union_type => .union_type,
+                        .class_type => .class_type,
+                        else => .none,
+                    };
+                    if (container_type != .none) {
                         inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
                         const inner_type = c.types.items[inner_type_id];
                         if (inner_type.struct_id != InvalidStructId) {
@@ -586,13 +593,11 @@ const Context = struct {
             }
         }
 
-        if (inner_type_address_opt) |inner_type_address| {
+        if (inner_type_address_opt != null) {
             c.dwarf.pushAddress();
             defer c.dwarf.popAddress();
 
-            const in_die_id = try c.dwarf.readDieIdAtAddress(inner_type_address) orelse unreachable;
-            const in_die = c.dwarf.dies.items[in_die_id];
-            if (in_die.tag == .structure_type or in_die.tag == .union_type or in_die.tag == .class_type) {
+            if (container_type != .none) {
                 const id = try c.addType(Type{
                     .name = name,
                     .size = c.types.items[inner_type_id].size,
@@ -608,12 +613,7 @@ const Context = struct {
 
                 const struct_id = try c.addStruct(container);
                 c.types.items[id].struct_id = struct_id;
-                c.types.items[id].struct_type = switch (in_die.tag) {
-                    .structure_type => .struct_type,
-                    .union_type => .union_type,
-                    .class_type => .class_type,
-                    else => unreachable,
-                };
+                c.types.items[id].struct_type = container_type;
             } else {
                 return;
             }
