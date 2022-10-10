@@ -258,6 +258,17 @@ const Context = struct {
         return id;
     }
 
+    fn namespaceLessThan(context: void, a: Namespace, b: Namespace) bool {
+        _ = context;
+        const a_sr = a.struct_range;
+        const b_sr = b.struct_range;
+        if (a_sr.start == b_sr.start) {
+            return a_sr.end > b_sr.end;
+        } else {
+            return a_sr.start < b_sr.start;
+        }
+    }
+
     pub fn run(c: *Self) !void {
         {
             var timer = try std.time.Timer.start();
@@ -286,7 +297,15 @@ const Context = struct {
 
         {
             var timer = try std.time.Timer.start();
-            // try c.printContainers();
+            mem.reverse(Namespace, c.namespaces.items);
+            std.sort.sort(Namespace, c.namespaces.items, {}, namespaceLessThan);
+            const ns = timer.read();
+            std.debug.print("Sorting namespaces: {}\n", .{std.fmt.fmtDuration(ns)});
+        }
+
+        {
+            var timer = try std.time.Timer.start();
+            try c.printContainers();
             const ns = timer.read();
             std.debug.print("Printing: {}\n", .{std.fmt.fmtDuration(ns)});
         }
@@ -662,18 +681,15 @@ const Context = struct {
             try stdout.print("{s: >[2]} {{ // size={}\n", .{ container_prefix, stype.size, left_pad + container_prefix.len });
         } else {
             try stdout.print("{s: >[1]} ", .{ container_prefix, left_pad + container_prefix.len });
-            if (c.namespaces.items.len > 0) {
-                var ni = c.namespaces.items.len;
-                while (ni > 0) {
-                    ni -= 1;
-                    const ns = c.namespaces.items[ni];
-                    const in = ns.struct_range.contains(sid);
-
-                    if (in) {
-                        try stdout.print("{s}::", .{ns.name});
-                    }
+            for (c.namespaces.items) |ns| {
+                if (ns.struct_range.start > sid) {
+                    break;
+                }
+                if (ns.struct_range.contains(sid)) {
+                    try stdout.print("{s}::", .{ns.name});
                 }
             }
+
             try stdout.print("{s} {{ // size={}\n", .{ stype.name, stype.size });
         }
         for (members) |member| {
