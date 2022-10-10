@@ -306,7 +306,7 @@ const Context = struct {
                 .union_type,
                 .class_type,
                 => {
-                    _ = try c.parseStructure(die_addr);
+                    _ = try c.parseStructure(die_addr, die_id);
                 },
                 Dwarf.DW_TAG.typedef => {
                     try c.readTypedefAtAddress(die_addr);
@@ -351,18 +351,16 @@ const Context = struct {
         };
     }
 
-    pub fn parseStructure(c: *Context, die_addr: usize) !Structure {
-        const stype_id = try c.readTypeAtAddressAndSkip(die_addr);
+    pub fn parseStructure(c: *Context, die_addr: usize, die_id: Dwarf.DieId) !Structure {
+        const stype_id = try c.readTypeAtAddressAndNoSkip(die_addr);
         const stype = c.types.items[stype_id];
         if (stype.struct_id != std.math.maxInt(@TypeOf(stype.struct_id))) {
-            const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
             try c.dwarf.skipDieAndChildren(die_id);
             return c.structures.items[stype.struct_id];
         }
 
-        const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
         const die = c.dwarf.dies.items[die_id];
-        const s = try c.parseStructureImpl(die_addr);
+        const s = try c.parseStructureImpl(die_addr, die_id);
 
         const id = try c.addStruct(s);
         c.types.items[s.type_id].struct_id = id;
@@ -376,8 +374,7 @@ const Context = struct {
         return s;
     }
 
-    pub fn parseStructureImpl(c: *Context, die_addr: usize) TypeError!Structure {
-        const die_id = try c.dwarf.readDieIdAtAddress(die_addr) orelse unreachable;
+    pub fn parseStructureImpl(c: *Context, die_addr: usize, die_id: Dwarf.DieId) TypeError!Structure {
         const die = c.dwarf.dies.items[die_id];
         const stype_id = try c.readTypeAtAddressAndSkip(die_addr);
 
@@ -411,17 +408,17 @@ const Context = struct {
                         c.member_scratch_stack.push(member);
                     },
                     .structure_type => {
-                        const s = try c.parseStructureImpl(child_die_addr);
+                        const s = try c.parseStructureImpl(child_die_addr, child_die_id);
                         c.types.items[s.type_id].struct_type = .struct_type;
                         c.structure_scratch_stack.push(s);
                     },
                     .union_type => {
-                        const s = try c.parseStructureImpl(child_die_addr);
+                        const s = try c.parseStructureImpl(child_die_addr, child_die_id);
                         c.types.items[s.type_id].struct_type = .union_type;
                         c.structure_scratch_stack.push(s);
                     },
                     .class_type => {
-                        const s = try c.parseStructureImpl(child_die_addr);
+                        const s = try c.parseStructureImpl(child_die_addr, child_die_id);
                         c.types.items[s.type_id].struct_type = .class_type;
                         c.structure_scratch_stack.push(s);
                     },
@@ -580,7 +577,7 @@ const Context = struct {
                         if (inner_type.struct_id != InvalidStructId) {
                             s = c.structures.items[inner_type.struct_id];
                         } else {
-                            s = try c.parseStructure(inner_type_address);
+                            s = try c.parseStructure(inner_type_address, inner_die_id);
                         }
                     }
                 },

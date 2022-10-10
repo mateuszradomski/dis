@@ -290,8 +290,8 @@ const AttrSkip = struct {
     };
 };
 
-const DieId = u32;
-const DieRange = Range(DieId);
+pub const DieId = u32;
+pub const DieRange = Range(DieId);
 const Die = struct {
     has_children: bool,
     sibling_attr_index: u8,
