@@ -309,7 +309,7 @@ const Context = struct {
                     _ = try c.parseStructure(die_addr, die_id, die.tag);
                 },
                 Dwarf.DW_TAG.typedef => {
-                    try c.readTypedefAtAddress(die_addr);
+                    try c.readTypedefAtAddress(die_addr, die_id);
                 },
                 Dwarf.DW_TAG.namespace => {
                     var namespace = try c.readNamespace(die_addr);
@@ -557,8 +557,7 @@ const Context = struct {
         return id;
     }
 
-    pub fn readTypedefAtAddress(c: *Context, typedef_address: usize) !void {
-        const die_id = try c.dwarf.readDieIdAtAddress(typedef_address) orelse unreachable;
+    pub fn readTypedefAtAddress(c: *Context, typedef_address: usize, die_id: Dwarf.DieId) !void {
         const die = c.dwarf.dies.items[die_id];
 
         var name: []const u8 = "";
