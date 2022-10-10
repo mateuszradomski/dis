@@ -263,7 +263,7 @@ const Context = struct {
             var timer = try std.time.Timer.start();
             var biggest_cu_size: u32 = 0;
             for (c.dwarf.cus.items) |cu| {
-                biggest_cu_size = @maximum(biggest_cu_size, cu.unit_length + cu.size);
+                biggest_cu_size = @maximum(biggest_cu_size, cu.payload_size + cu.size);
             }
             c.type_addresses = try c.gpa.alloc(TypeId, biggest_cu_size);
             mem.set(TypeId, c.type_addresses, std.math.maxInt(TypeId));
@@ -272,11 +272,11 @@ const Context = struct {
                 c.dwarf.setCu(cu);
 
                 // TODO(radomski): Kinda stupid?
-                while (c.dwarf.debug_info.isGood()) {
+                while (c.dwarf.inCurrentCu()) {
                     try c.readChildren();
                 }
 
-                mem.set(TypeId, c.type_addresses[0 .. cu.size + cu.unit_length], std.math.maxInt(TypeId));
+                mem.set(TypeId, c.type_addresses[0 .. cu.size + cu.payload_size], std.math.maxInt(TypeId));
             }
             const ns = timer.read();
             const elapsed_s = @intToFloat(f64, ns) / time.ns_per_s;

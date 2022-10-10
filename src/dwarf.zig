@@ -304,7 +304,7 @@ const CompilationUnit = struct {
     size: u8,
     address_size: u8,
     version: u16,
-    unit_length: u32,
+    payload_size: u32,
     debug_abbrev_offset: u32,
     offset: u32,
     dwarf_address_size: u8,
@@ -375,9 +375,10 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         const address_size = d.debug_info.consumeType(u8) orelse return Error.EndOfBuffer;
         const size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
+        const payload_size = unit_length - (size - unit_length_size);
         const cu_offset = d.debug_info.curr_pos;
         const cu = CompilationUnit{
-            .unit_length = @intCast(u32, unit_length),
+            .payload_size = @intCast(u32, payload_size),
             .version = version,
             .debug_abbrev_offset = @intCast(u32, debug_abbrev_offset),
             .address_size = address_size,
@@ -388,7 +389,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         };
         try d.cus.append(cu);
 
-        d.debug_info.curr_pos += cu.unit_length - (size - unit_length_size);
+        d.debug_info.curr_pos += payload_size;
     }
     d.popAddress();
     // d.debug_info.advance(@sizeOf(CompilationUnitHeader));
@@ -576,7 +577,7 @@ pub fn setCu(self: *Self, cu: CompilationUnit) void {
 }
 
 pub fn inCurrentCu(self: *Self) bool {
-    return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.unit_length - 7);
+    return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.payload_size);
 }
 
 pub fn getAttrs(self: *Self, range: AttrRange) []Attr {
