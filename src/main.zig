@@ -621,13 +621,12 @@ const Context = struct {
         }
 
         if (container_type != .none) {
-            c.dwarf.pushAddress();
-            defer c.dwarf.popAddress();
             const id = try c.addType(Type{
                 .name = name,
                 .size = c.types.items[s.type_id].size,
                 .ptr_count = c.types.items[s.type_id].ptr_count,
                 .dimension = c.types.items[s.type_id].dimension,
+                .struct_type = container_type,
             });
             c.type_addresses[c.dwarf.toLocalAddr(global_typedef_address)] = id;
             const container = Structure{
@@ -638,7 +637,6 @@ const Context = struct {
 
             const struct_id = try c.addStruct(container);
             c.types.items[id].struct_id = struct_id;
-            c.types.items[id].struct_type = container_type;
         }
     }
 
