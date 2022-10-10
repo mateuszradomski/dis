@@ -286,7 +286,7 @@ const Context = struct {
 
         {
             var timer = try std.time.Timer.start();
-            try c.printContainers();
+            // try c.printContainers();
             const ns = timer.read();
             std.debug.print("Printing: {}\n", .{std.fmt.fmtDuration(ns)});
         }
@@ -552,8 +552,6 @@ const Context = struct {
         const die = c.dwarf.dies.items[die_id];
 
         var name: []const u8 = "";
-        var inner_type_address_opt: ?usize = null;
-        var inner_type_id: TypeId = 0;
         var s: Structure = undefined;
         var container_type: Type.StructType = .none;
 
@@ -563,8 +561,7 @@ const Context = struct {
                     name = try c.dwarf.readString(attr.form);
                 },
                 Dwarf.DW_AT.type => {
-                    inner_type_address_opt = @intCast(u32, try c.dwarf.readFormData(attr.form));
-                    const inner_type_address = inner_type_address_opt.?;
+                    const inner_type_address = @intCast(u32, try c.dwarf.readFormData(attr.form));
 
                     c.dwarf.pushAddress();
                     defer c.dwarf.popAddress();
@@ -578,7 +575,7 @@ const Context = struct {
                         else => .none,
                     };
                     if (container_type != .none) {
-                        inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
+                        const inner_type_id = try c.readTypeAtAddressAndSkip(inner_type_address);
                         const inner_type = c.types.items[inner_type_id];
                         if (inner_type.struct_id != InvalidStructId) {
                             s = c.structures.items[inner_type.struct_id];
@@ -593,32 +590,25 @@ const Context = struct {
             }
         }
 
-        if (inner_type_address_opt != null) {
+        if (container_type != .none) {
             c.dwarf.pushAddress();
             defer c.dwarf.popAddress();
+            const id = try c.addType(Type{
+                .name = name,
+                .size = c.types.items[s.type_id].size,
+                .ptr_count = c.types.items[s.type_id].ptr_count,
+                .dimension = c.types.items[s.type_id].dimension,
+            });
+            c.type_addresses[typedef_address] = id;
+            const container = Structure{
+                .type_id = id,
+                .member_range = s.member_range,
+                .inline_structures = s.inline_structures,
+            };
 
-            if (container_type != .none) {
-                const id = try c.addType(Type{
-                    .name = name,
-                    .size = c.types.items[inner_type_id].size,
-                    .ptr_count = c.types.items[inner_type_id].ptr_count,
-                    .dimension = c.types.items[inner_type_id].dimension,
-                });
-                c.type_addresses[typedef_address] = id;
-                const container = Structure{
-                    .type_id = id,
-                    .member_range = s.member_range,
-                    .inline_structures = s.inline_structures,
-                };
-
-                const struct_id = try c.addStruct(container);
-                c.types.items[id].struct_id = struct_id;
-                c.types.items[id].struct_type = container_type;
-            } else {
-                return;
-            }
-        } else {
-            return;
+            const struct_id = try c.addStruct(container);
+            c.types.items[id].struct_id = struct_id;
+            c.types.items[id].struct_type = container_type;
         }
     }
 
