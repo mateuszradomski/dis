@@ -302,12 +302,10 @@ const Die = struct {
 
 const CompilationUnit = struct {
     size: u8,
-    address_size: u8,
-    version: u16,
-    payload_size: u32,
-    debug_abbrev_offset: u32,
-    offset: u32,
     dwarf_address_size: u8,
+    address_size: u8,
+    payload_size: u32,
+    offset: u32,
     die_range: DieRange,
 };
 
@@ -346,6 +344,9 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         .debug_info_address_stack_top = 0,
     };
 
+    var debug_abbrev_offsets = std.ArrayList(u64).init(allocator);
+    defer debug_abbrev_offsets.deinit();
+
     d.pushAddress();
     while (d.debug_info.isGood()) {
         const start_pos = d.debug_info.curr_pos;
@@ -362,7 +363,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         };
         const unit_length_size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
-        const version = d.debug_info.consumeType(u16) orelse return Error.EndOfBuffer;
+        _ = d.debug_info.consumeType(u16) orelse return Error.EndOfBuffer;
         const debug_abbrev_offset = blk: {
             if (bitness == 32) {
                 break :blk d.debug_info.consumeType(u32) orelse return Error.EndOfBuffer;
@@ -379,8 +380,6 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         const cu_offset = d.debug_info.curr_pos;
         const cu = CompilationUnit{
             .payload_size = @intCast(u32, payload_size),
-            .version = version,
-            .debug_abbrev_offset = @intCast(u32, debug_abbrev_offset),
             .address_size = address_size,
             .offset = @intCast(u32, cu_offset),
             .size = size,
@@ -388,16 +387,16 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             .die_range = undefined,
         };
         try d.cus.append(cu);
+        try debug_abbrev_offsets.append(debug_abbrev_offset);
 
         d.debug_info.curr_pos += payload_size;
     }
     d.popAddress();
-    // d.debug_info.advance(@sizeOf(CompilationUnitHeader));
 
     var cu_index: usize = 0;
     var die_start: usize = 0;
     while (debug_abbrev.isGood()) {
-        if (cu_index + 1 < d.cus.items.len and d.cus.items[cu_index + 1].debug_abbrev_offset <= debug_abbrev.curr_pos) {
+        if (cu_index + 1 < d.cus.items.len and debug_abbrev_offsets.items[cu_index + 1] <= debug_abbrev.curr_pos) {
             d.cus.items[cu_index].die_range = .{ .start = @intCast(DieId, die_start), .end = @intCast(DieId, d.dies.items.len) };
             die_start = d.dies.items.len;
             cu_index += 1;
