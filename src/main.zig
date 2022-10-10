@@ -476,7 +476,7 @@ const Context = struct {
         const default_name = if (die.tag == .structure_type or die.tag == .union_type or die.tag == .class_type) "" else "void";
 
         var name: ?[]const u8 = null;
-        var size: ?u32 = if (die.tag == Dwarf.DW_TAG.pointer_type) 8 else null;
+        var size: u32 = 0;
         var inner_type_id: ?u32 = null;
         for (c.dwarf.getAttrs(die.attr_range)) |attr| {
             switch (attr.at) {
@@ -524,21 +524,31 @@ const Context = struct {
             }
         }
 
-        var ptr_count: u8 = if (die.tag == Dwarf.DW_TAG.pointer_type) 1 else 0;
-        if (inner_type_id) |inner_id| {
-            if (name == null) {
-                name = c.types.items[inner_id].name;
-            }
-            if (size == null) {
-                size = c.types.items[inner_id].size;
-            }
+        var ptr_count: u8 = 0;
+        if (die.tag == Dwarf.DW_TAG.pointer_type) {
+            size = 8;
+            ptr_count = 1;
+            if (inner_type_id) |inner_id| {
+                if (name == null) {
+                    name = c.types.items[inner_id].name;
+                }
 
-            ptr_count += c.types.items[inner_id].ptr_count;
+                ptr_count += c.types.items[inner_id].ptr_count;
+            }
+        } else {
+            if (inner_type_id) |inner_id| {
+                if (name == null) {
+                    name = c.types.items[inner_id].name;
+                }
+                if (size == 0) {
+                    size = c.types.items[inner_id].size;
+                }
+            }
         }
 
         const id = try c.addType(Type{
             .name = if (name) |n| n else default_name,
-            .size = if (size) |s| s else 0,
+            .size = size,
             .ptr_count = ptr_count,
             .dimension = dimension,
         });
