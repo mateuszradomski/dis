@@ -788,8 +788,8 @@ pub fn readOffsetIndexedString(self: *Self, index: usize) ![]const u8 {
     return name;
 }
 
-pub fn readDieIdAtAddress(self: *Self, addr: usize) !?DieId {
-    self.debug_info.curr_pos = self.toGlobalAddr(addr);
+pub fn readDieIdAtAddress(self: *Self, global_addr: usize) !?DieId {
+    self.debug_info.curr_pos = global_addr;
 
     while (self.debug_info.isGood()) {
         const code = readULEB128(&self.debug_info);
@@ -817,8 +817,8 @@ pub fn skipDieAndChildren(self: *Self, die_id: DieId) !void {
     } else {
         self.skipDieAttrs(die_id);
         if (die.has_children == true) {
-            while (self.readNextDie()) |addr| {
-                const inner_die_id = try self.readDieIdAtAddress(addr) orelse break;
+            while (self.readNextDie()) |global_addr| {
+                const inner_die_id = try self.readDieIdAtAddress(global_addr) orelse break;
                 try self.skipDieAndChildren(inner_die_id);
             }
         }
@@ -845,8 +845,8 @@ pub fn readDieIfTag(self: *Self, tag: DW_TAG) ?Die {
 }
 
 pub fn readNextDie(self: *Self) ?usize {
-    while (self.debug_info.isGood() and self.inCurrentCu()) {
-        return self.toLocalAddr(self.debug_info.curr_pos);
+    if (self.inCurrentCu() and self.debug_info.isGood()) {
+        return self.debug_info.curr_pos;
     }
 
     return null;
