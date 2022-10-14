@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
+const fs = std.fs;
 
 const KiloByte = 1024;
 const MegaByte = 1024 * KiloByte;
@@ -13,11 +14,18 @@ test {
 
     var ctx = TestContext.init(arena);
     {
-        const dir_path = try std.fs.path.join(arena, &.{
-            std.fs.path.dirname(@src().file).?, "..", "tests",
-        });
+        const zig_exe_path = try std.process.getEnvVarOwned(arena, "ZIG_EXE");
+        const zig_cc_compiler_args = [_][]const u8{ zig_exe_path, "cc" };
+        const gcc_compiler_args = [_][]const u8{"gcc"};
 
-        try ctx.addTestsFromDir(dir_path);
+        const common_dir_path = try fs.path.join(arena, &.{ fs.path.dirname(@src().file).?, "..", "tests", "common" });
+        const zig_cc_dir_path = try fs.path.join(arena, &.{ fs.path.dirname(@src().file).?, "..", "tests", "zig_cc" });
+        try ctx.addTestsFromDir(common_dir_path, &zig_cc_compiler_args);
+        try ctx.addTestsFromDir(zig_cc_dir_path, &zig_cc_compiler_args);
+
+        const gcc_dir_path = try fs.path.join(arena, &.{ fs.path.dirname(@src().file).?, "..", "tests", "gcc" });
+        try ctx.addTestsFromDir(common_dir_path, &gcc_compiler_args);
+        try ctx.addTestsFromDir(gcc_dir_path, &gcc_compiler_args);
     }
 
     try ctx.run();
@@ -31,6 +39,7 @@ const TestContext = struct {
     const TestConfig = struct {
         dwarf_version: u8,
         dwarf_bitness: u8,
+        compiler_args: []const []const u8,
     };
 
     const Test = struct {
@@ -59,7 +68,7 @@ const TestContext = struct {
         return result;
     }
 
-    pub fn addTestsFromDir(tc: *Self, dir_path: []const u8) !void {
+    pub fn addTestsFromDir(tc: *Self, dir_path: []const u8, compiler_args: []const []const u8) !void {
         var dir = try std.fs.cwd().openIterableDir(dir_path, .{});
         defer dir.close();
 
@@ -81,17 +90,18 @@ const TestContext = struct {
             const expected_output = try tc.getExpectedTestOutput(src);
 
             const configs = &[_]TestConfig{
-                .{ .dwarf_version = 2, .dwarf_bitness = 32 },
-                .{ .dwarf_version = 3, .dwarf_bitness = 32 },
-                .{ .dwarf_version = 4, .dwarf_bitness = 32 },
-                .{ .dwarf_version = 5, .dwarf_bitness = 32 },
-                .{ .dwarf_version = 3, .dwarf_bitness = 64 },
-                .{ .dwarf_version = 4, .dwarf_bitness = 64 },
-                .{ .dwarf_version = 5, .dwarf_bitness = 64 },
+                .{ .dwarf_version = 2, .dwarf_bitness = 32, .compiler_args = compiler_args },
+                .{ .dwarf_version = 3, .dwarf_bitness = 32, .compiler_args = compiler_args },
+                .{ .dwarf_version = 4, .dwarf_bitness = 32, .compiler_args = compiler_args },
+                .{ .dwarf_version = 5, .dwarf_bitness = 32, .compiler_args = compiler_args },
+                .{ .dwarf_version = 3, .dwarf_bitness = 64, .compiler_args = compiler_args },
+                .{ .dwarf_version = 4, .dwarf_bitness = 64, .compiler_args = compiler_args },
+                .{ .dwarf_version = 5, .dwarf_bitness = 64, .compiler_args = compiler_args },
             };
             for (configs) |config| {
                 try tc.tests.append(tc.arena, Test{
-                    .name = try std.fmt.allocPrint(tc.arena, "dwarf{d}_{d}bit_{s}", .{
+                    .name = try std.fmt.allocPrint(tc.arena, "{s}_dwarf{d}_{d}bit_{s}", .{
+                        fs.path.basename(compiler_args[0]),
                         config.dwarf_version,
                         config.dwarf_bitness,
                         std.fs.path.basename(filename),
@@ -105,10 +115,11 @@ const TestContext = struct {
     }
 
     pub fn run(tc: *Self) !void {
-        const zig_exe_path = try std.process.getEnvVarOwned(tc.arena, "ZIG_EXE");
 
         // Compile the exec
         {
+            const zig_exe_path = try std.process.getEnvVarOwned(tc.arena, "ZIG_EXE");
+
             var args = std.ArrayList([]const u8).init(tc.arena);
             defer args.deinit();
 
@@ -148,8 +159,9 @@ const TestContext = struct {
                 var args = std.ArrayList([]const u8).init(tc.arena);
                 defer args.deinit();
 
-                try args.append(zig_exe_path);
-                try args.append("cc");
+                for (t.config.compiler_args) |arg| {
+                    try args.append(arg);
+                }
                 try args.append(t.file_path);
                 try args.append("-o");
                 try args.append(output_path);

@@ -363,17 +363,33 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         };
         const unit_length_size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
-        _ = d.debug_info.consumeType(u16) orelse return Error.EndOfBuffer;
-        const debug_abbrev_offset = blk: {
-            if (bitness == 32) {
-                break :blk d.debug_info.consumeType(u32) orelse return Error.EndOfBuffer;
-            } else if (bitness == 64) {
-                break :blk d.debug_info.consumeType(u64) orelse return Error.EndOfBuffer;
-            } else {
-                unreachable;
-            }
-        };
-        const address_size = d.debug_info.consumeType(u8) orelse return Error.EndOfBuffer;
+        const version = d.debug_info.consumeType(u16) orelse return Error.EndOfBuffer;
+        var address_size: u8 = 0;
+        var debug_abbrev_offset: u64 = 0;
+        if (version == 5) {
+            _ = d.debug_info.consumeType(u8) orelse return Error.EndOfBuffer; // unit_type
+            address_size = d.debug_info.consumeType(u8) orelse return Error.EndOfBuffer;
+            debug_abbrev_offset = blk: {
+                if (bitness == 32) {
+                    break :blk d.debug_info.consumeType(u32) orelse return Error.EndOfBuffer;
+                } else if (bitness == 64) {
+                    break :blk d.debug_info.consumeType(u64) orelse return Error.EndOfBuffer;
+                } else {
+                    unreachable;
+                }
+            };
+        } else {
+            debug_abbrev_offset = blk: {
+                if (bitness == 32) {
+                    break :blk d.debug_info.consumeType(u32) orelse return Error.EndOfBuffer;
+                } else if (bitness == 64) {
+                    break :blk d.debug_info.consumeType(u64) orelse return Error.EndOfBuffer;
+                } else {
+                    unreachable;
+                }
+            };
+            address_size = d.debug_info.consumeType(u8) orelse return Error.EndOfBuffer;
+        }
         const size = @intCast(u8, d.debug_info.curr_pos - start_pos);
 
         const payload_size = unit_length - (size - unit_length_size);
@@ -425,6 +441,9 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             const at = @intToEnum(DW_AT, atv);
             // NOTE(radomski): uleb, but always just one byte
             const val = @intToEnum(DW_FORM, debug_abbrev.consumeTypeUnchecked(u8));
+            if (val == .implicit_const) {
+                _ = readULEB128(debug_abbrev);
+            }
             if (at == DW_AT.null) {
                 break;
             }
@@ -550,9 +569,9 @@ pub fn generateAttrSkips(self: *Self, attrs: []Attr, machine_address_size: u8, d
             DW_FORM.ref_sup4 => unreachable,
             DW_FORM.strp_sup => unreachable,
             DW_FORM.data16 => unreachable,
-            DW_FORM.line_strp => unreachable,
+            DW_FORM.line_strp => helper.skipN(dwarf_address_size),
             DW_FORM.ref_sig8 => unreachable,
-            DW_FORM.implicit_const => unreachable,
+            DW_FORM.implicit_const => {},
             DW_FORM.loclistx => unreachable,
             DW_FORM.rnglistx => unreachable,
             DW_FORM.ref_sup8 => unreachable,
@@ -648,7 +667,7 @@ pub fn skipFormData(self: *Self, form: DW_FORM) void {
         DW_FORM.data16 => unreachable,
         DW_FORM.line_strp => unreachable,
         DW_FORM.ref_sig8 => unreachable,
-        DW_FORM.implicit_const => unreachable,
+        DW_FORM.implicit_const => {},
         DW_FORM.loclistx => unreachable,
         DW_FORM.rnglistx => unreachable,
         DW_FORM.ref_sup8 => unreachable,

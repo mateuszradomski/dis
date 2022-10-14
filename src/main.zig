@@ -528,7 +528,7 @@ const Context = struct {
                     switch (child_attr.at) {
                         .upper_bound, .count => {
                             const offset: u8 = if (child_attr.at == .upper_bound) 1 else 0;
-                            const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form)) +| offset;
+                            const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form)) +% offset;
                             dimension *= @intCast(u32, array_dim);
                         },
                         else => {
@@ -649,7 +649,7 @@ const Context = struct {
         var member_name_pad: usize = 0;
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
-            const skip = s.inline_structures.contains(mtype.struct_id);
+            const skip = s.inline_structures.contains(mtype.struct_id) or (mtype.name.len == 0 and mtype.struct_type != .none);
             if (skip) {
                 continue;
             }
@@ -686,7 +686,7 @@ const Context = struct {
         }
         for (members) |member| {
             const mtype = c.types.items[member.type_id];
-            if (s.inline_structures.contains(mtype.struct_id)) {
+            if (s.inline_structures.contains(mtype.struct_id) or (mtype.name.len == 0 and mtype.struct_type != .none)) {
                 try c.printStructImpl(
                     mtype.struct_id,
                     c.structures.items[mtype.struct_id],
