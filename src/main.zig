@@ -526,15 +526,9 @@ const Context = struct {
             while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
                 for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr| {
                     switch (child_attr.at) {
-                        Dwarf.DW_AT.upper_bound, Dwarf.DW_AT.count => {
-                            const array_dim = blk: {
-                                const val = @intCast(u64, try c.dwarf.readFormData(child_attr.form));
-                                if (val == std.math.maxInt(u64)) {
-                                    break :blk 0;
-                                } else {
-                                    break :blk val;
-                                }
-                            };
+                        .upper_bound, .count => {
+                            const offset: u8 = if (child_attr.at == .upper_bound) 1 else 0;
+                            const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form)) +| offset;
                             dimension *= @intCast(u32, array_dim);
                         },
                         else => {
