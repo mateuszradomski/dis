@@ -316,6 +316,7 @@ pub const Error = error{
 const Self = @This();
 
 attrs: std.ArrayList(Attr),
+attr_implicit_consts: std.AutoHashMap(AttrId, usize),
 attr_skips: std.ArrayList(AttrSkip),
 dies: std.ArrayList(Die),
 cus: std.ArrayList(CompilationUnit),
@@ -332,6 +333,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
     var d = Self{
         .dies = std.ArrayList(Die).init(allocator),
         .attrs = std.ArrayList(Attr).init(allocator),
+        .attr_implicit_consts = std.AutoHashMap(AttrId, usize).init(allocator),
         .attr_skips = std.ArrayList(AttrSkip).init(allocator),
         .cus = std.ArrayList(CompilationUnit).init(allocator),
         .current_cu = undefined,
@@ -442,7 +444,8 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
             // NOTE(radomski): uleb, but always just one byte
             const val = @intToEnum(DW_FORM, debug_abbrev.consumeTypeUnchecked(u8));
             if (val == .implicit_const) {
-                _ = readULEB128(debug_abbrev);
+                const implicit_const_value = readULEB128(debug_abbrev);
+                try d.attr_implicit_consts.put(@intCast(AttrId, d.attrs.items.len + 1), implicit_const_value);
             }
             if (at == DW_AT.null) {
                 break;
@@ -682,7 +685,7 @@ pub fn skipFormData(self: *Self, form: DW_FORM) void {
     }
 }
 
-pub fn readFormData(self: *Self, form: DW_FORM) !usize {
+pub fn readFormData(self: *Self, form: DW_FORM, attr_id: usize) !usize {
     switch (form) {
         DW_FORM.null => unreachable,
         DW_FORM.addr => {
@@ -751,7 +754,7 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
         DW_FORM.data16 => unreachable,
         DW_FORM.line_strp => unreachable,
         DW_FORM.ref_sig8 => unreachable,
-        DW_FORM.implicit_const => unreachable,
+        DW_FORM.implicit_const => return self.attr_implicit_consts.get(@intCast(u24, attr_id + 1)) orelse unreachable,
         DW_FORM.loclistx => unreachable,
         DW_FORM.rnglistx => unreachable,
         DW_FORM.ref_sup8 => unreachable,
@@ -767,14 +770,14 @@ pub fn readFormData(self: *Self, form: DW_FORM) !usize {
     return 0;
 }
 
-pub fn readString(self: *Self, form: DW_FORM) ![]const u8 {
+pub fn readString(self: *Self, form: DW_FORM, attr_id: usize) ![]const u8 {
     if (form == DW_FORM.strp) {
-        const name_addr = try self.readFormData(form);
+        const name_addr = try self.readFormData(form, attr_id);
         return self.readOffsetString(name_addr);
     } else if (form == DW_FORM.string) {
         return self.readFormString();
     } else {
-        const offset_index = try self.readFormData(form);
+        const offset_index = try self.readFormData(form, attr_id);
         return self.readOffsetIndexedString(offset_index);
     }
 }
@@ -829,7 +832,7 @@ pub fn skipDieAndChildren(self: *Self, die_id: DieId) !void {
             self.skipFormData(attrs[i].form);
         }
         const attr = attrs[die.sibling_attr_index];
-        const address = @intCast(u32, try self.readFormData(attr.form));
+        const address = @intCast(u32, try self.readFormData(attr.form, die.attr_range.start + die.sibling_attr_index));
         const global_address = self.toGlobalAddr(address);
         self.debug_info.curr_pos = global_address;
     } else {

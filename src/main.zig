@@ -352,10 +352,10 @@ const Context = struct {
         const name = blk: {
             var name: []const u8 = undefined;
 
-            for (c.dwarf.getAttrs(die.attr_range)) |attr| {
+            for (c.dwarf.getAttrs(die.attr_range)) |attr, attr_idx| {
                 switch (attr.at) {
                     .name => {
-                        name = try c.dwarf.readString(attr.form);
+                        name = try c.dwarf.readString(attr.form, die.attr_range.start + attr_idx);
                     },
                     else => c.dwarf.skipFormData(attr.form),
                 }
@@ -409,16 +409,22 @@ const Context = struct {
                 switch (child_die.tag) {
                     Dwarf.DW_TAG.member => {
                         var member = mem.zeroes(StructMember);
-                        for (c.dwarf.getAttrs(child_die.attr_range)) |attr| {
+                        for (c.dwarf.getAttrs(child_die.attr_range)) |attr, attr_idx| {
                             switch (attr.at) {
                                 .type => {
-                                    const global_type_address = c.dwarf.toGlobalAddr(@intCast(u32, try c.dwarf.readFormData(attr.form)));
+                                    const global_type_address = c.dwarf.toGlobalAddr(@intCast(u32, try c.dwarf.readFormData(
+                                        attr.form,
+                                        child_die.attr_range.start + attr_idx,
+                                    )));
                                     c.dwarf.pushAddress();
                                     member.type_id = try c.readTypeAtAddressAndNoSkip(global_type_address);
                                     c.dwarf.popAddress();
                                 },
-                                .data_member_location => member.mem_loc = @intCast(u32, try c.dwarf.readFormData(attr.form)),
-                                .name => member.name = try c.dwarf.readString(attr.form),
+                                .data_member_location => member.mem_loc = @intCast(u32, try c.dwarf.readFormData(
+                                    attr.form,
+                                    child_die.attr_range.start + attr_idx,
+                                )),
+                                .name => member.name = try c.dwarf.readString(attr.form, child_die.attr_range.start + attr_idx),
                                 else => c.dwarf.skipFormData(attr.form),
                             }
                         }
@@ -499,16 +505,16 @@ const Context = struct {
         var name: ?[]const u8 = null;
         var size: u32 = 0;
         var inner_type_id: ?u32 = null;
-        for (c.dwarf.getAttrs(die.attr_range)) |attr| {
+        for (c.dwarf.getAttrs(die.attr_range)) |attr, attr_idx| {
             switch (attr.at) {
                 Dwarf.DW_AT.name => {
-                    name = try c.dwarf.readString(attr.form);
+                    name = try c.dwarf.readString(attr.form, die.attr_range.start + attr_idx);
                 },
                 Dwarf.DW_AT.byte_size => {
-                    size = @intCast(u32, try c.dwarf.readFormData(attr.form));
+                    size = @intCast(u32, try c.dwarf.readFormData(attr.form, die.attr_range.start + attr_idx));
                 },
                 Dwarf.DW_AT.type => {
-                    const inner_type_address = c.dwarf.toGlobalAddr(@intCast(u32, try c.dwarf.readFormData(attr.form)));
+                    const inner_type_address = c.dwarf.toGlobalAddr(@intCast(u32, try c.dwarf.readFormData(attr.form, die.attr_range.start + attr_idx)));
                     c.dwarf.pushAddress();
                     inner_type_id = try c.readTypeAtAddressAndNoSkip(inner_type_address);
                     c.dwarf.popAddress();
@@ -524,11 +530,11 @@ const Context = struct {
             dimension = 1;
             std.debug.assert(die.has_children);
             while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
-                for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr| {
+                for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr, child_attr_idx| {
                     switch (child_attr.at) {
                         .upper_bound, .count => {
                             const offset: u8 = if (child_attr.at == .upper_bound) 1 else 0;
-                            const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form)) +% offset;
+                            const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form, child_die.attr_range.start + child_attr_idx)) +% offset;
                             dimension *= @intCast(u32, array_dim);
                         },
                         else => {
@@ -579,13 +585,13 @@ const Context = struct {
         var s: Structure = undefined;
         var container_type: Type.StructType = .none;
 
-        for (c.dwarf.getAttrs(die.attr_range)) |attr| {
+        for (c.dwarf.getAttrs(die.attr_range)) |attr, attr_idx| {
             switch (attr.at) {
                 Dwarf.DW_AT.name => {
-                    name = try c.dwarf.readString(attr.form);
+                    name = try c.dwarf.readString(attr.form, die.attr_range.start + attr_idx);
                 },
                 Dwarf.DW_AT.type => {
-                    const inner_type_address = c.dwarf.toGlobalAddr(@intCast(u32, try c.dwarf.readFormData(attr.form)));
+                    const inner_type_address = c.dwarf.toGlobalAddr(@intCast(u32, try c.dwarf.readFormData(attr.form, die.attr_range.start + attr_idx)));
 
                     c.dwarf.pushAddress();
                     defer c.dwarf.popAddress();
