@@ -432,10 +432,14 @@ const Context = struct {
                                     attr.form,
                                     child_die.attr_range.start + attr_idx,
                                 )),
-                                .data_bit_offset => member.bit_loc = @intCast(u16, (c.types.items[member.type_id].size * 8) - @intCast(u32, try c.dwarf.readFormData(
-                                    attr.form,
-                                    child_die.attr_range.start + attr_idx,
-                                ))) - member.bit_size, // TODO(radomski): bit_size might not be read at this point
+                                .data_bit_offset => {
+                                    // TODO(radomski): bit_size might not be read at this point
+                                    const form_data = try c.dwarf.readFormData(attr.form, child_die.attr_range.start + attr_idx);
+                                    const type_bit_size = c.types.items[member.type_id].size * 8;
+                                    const value = @intCast(u32, form_data % type_bit_size);
+                                    member.mem_loc += @intCast(u32, form_data) / type_bit_size;
+                                    member.bit_loc = @intCast(u16, (type_bit_size) - value - member.bit_size);
+                                },
                                 .bit_size => member.bit_size = @intCast(u16, try c.dwarf.readFormData(
                                     attr.form,
                                     child_die.attr_range.start + attr_idx,
@@ -579,6 +583,9 @@ const Context = struct {
                 }
                 if (size == 0) {
                     size = c.types.items[inner_id].size;
+                    if (c.types.items[inner_id].isArray()) {
+                        size *= c.types.items[inner_id].dimension;
+                    }
                 }
             }
         }
