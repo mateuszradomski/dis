@@ -167,6 +167,8 @@ const StructMember = struct {
     name: []const u8,
     type_id: TypeId,
     mem_loc: u32,
+    bit_loc: u16,
+    bit_size: u16,
 };
 
 const MemberId = u32;
@@ -426,6 +428,18 @@ const Context = struct {
                                     attr.form,
                                     child_die.attr_range.start + attr_idx,
                                 )),
+                                .bit_offset => member.bit_loc = @intCast(u16, try c.dwarf.readFormData(
+                                    attr.form,
+                                    child_die.attr_range.start + attr_idx,
+                                )),
+                                .data_bit_offset => member.bit_loc = @intCast(u16, (c.types.items[member.type_id].size * 8) - @intCast(u32, try c.dwarf.readFormData(
+                                    attr.form,
+                                    child_die.attr_range.start + attr_idx,
+                                ))) - member.bit_size, // TODO(radomski): bit_size might not be read at this point
+                                .bit_size => member.bit_size = @intCast(u16, try c.dwarf.readFormData(
+                                    attr.form,
+                                    child_die.attr_range.start + attr_idx,
+                                )),
                                 .name => member.name = try c.dwarf.readString(attr.form, child_die.attr_range.start + attr_idx),
                                 else => c.dwarf.skipFormData(attr.form),
                             }
@@ -665,6 +679,8 @@ const Context = struct {
             type_name_pad = @maximum(type_name_pad, mtype.name.len + mtype.ptr_count);
             if (mtype.isArray()) {
                 member_name_pad = @maximum(member_name_pad, member.name.len + fmt.count("[{d}]", .{mtype.dimension}));
+            } else if (member.bit_size != 0) {
+                member_name_pad = @maximum(member_name_pad, member.name.len + fmt.count(":{}", .{member.bit_size}));
             } else {
                 member_name_pad = @maximum(member_name_pad, member.name.len);
             }
@@ -722,12 +738,25 @@ const Context = struct {
                 size *= @intCast(u32, mtype.dimension);
                 written += fmt.count("[{d}]", .{mtype.dimension});
             }
-            try stdout.print(";{s: <[3]} // size={}, offset={}\n", .{
-                "",
-                size,
-                mem_offset + member.mem_loc,
-                member_name_pad - written,
-            });
+            const mem_loc = mem_offset + member.mem_loc;
+            if (member.bit_size == 0) {
+                try stdout.print(";{s: <[3]} // size={}, offset={}\n", .{
+                    "",
+                    size,
+                    mem_loc,
+                    member_name_pad - written,
+                });
+            } else {
+                written += fmt.count(":{d}", .{member.bit_size});
+                try stdout.print(":{};{s: <[5]} // size={}, offset={}:{}\n", .{
+                    member.bit_size,
+                    "",
+                    size,
+                    mem_loc,
+                    (size * 8) - (member.bit_size + member.bit_loc),
+                    member_name_pad - written,
+                });
+            }
         }
         if (member_name.len > 0) {
             try stdout.print("{s: <[2]}}} {s};\n", .{ "", member_name, left_pad });
