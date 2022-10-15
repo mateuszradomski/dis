@@ -332,7 +332,9 @@ const Context = struct {
                 },
                 Dwarf.DW_TAG.namespace => {
                     var namespace = try c.readNamespace(global_die_address);
-                    try c.readChildren();
+                    if (die.has_children) {
+                        try c.readChildren();
+                    }
                     namespace.struct_range.end = @intCast(u32, c.structures.items.len);
                     try c.namespaces.append(c.arena, namespace);
                 },
