@@ -233,10 +233,11 @@ const Context = struct {
     structure_scratch_stack: Stack(Structure),
 
     pub fn init(allocator: mem.Allocator, dwarf: Dwarf) !Self {
+        const estimated_num_of_members = dwarf.dies.items.len * 10;
         var c = Context{
-            .types = std.ArrayList(Type).init(allocator),
-            .structures = std.ArrayList(Structure).init(allocator),
-            .members = std.ArrayList(StructMember).init(allocator),
+            .types = try std.ArrayList(Type).initCapacity(allocator, estimated_num_of_members),
+            .structures = try std.ArrayList(Structure).initCapacity(allocator, estimated_num_of_members),
+            .members = try std.ArrayList(StructMember).initCapacity(allocator, estimated_num_of_members),
             .dwarf = dwarf,
             .gpa = allocator,
             .arena = allocator,
@@ -555,7 +556,7 @@ const Context = struct {
                         .upper_bound, .count => {
                             const offset: u8 = if (child_attr.at == .upper_bound) 1 else 0;
                             const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form, child_die.attr_range.start + child_attr_idx)) +% offset;
-                            dimension *= @intCast(u32, array_dim);
+                            dimension *= @truncate(u32, array_dim);
                         },
                         else => {
                             c.dwarf.skipFormData(child_attr.form);
