@@ -142,6 +142,7 @@ int t(_GE3GGYRZG4 m) {
 //        };
 //      };
 //      uint8_t _GMYWEMDBGI:4; // size=1, offset=35:0
+//      // HOLE => 4 bits
 //    };
 //  };
 //  uint32_t      _MM2TKNJYGM;    // size=4, offset=36
@@ -183,6 +184,7 @@ int t(_GE3GGYRZG4 m) {
 //        struct { // size=1
 //          uint8_t _HA2GGYZQHF:2; // size=1, offset=49:0
 //          uint8_t _GNQWKYLGHE:2; // size=1, offset=49:2
+//          // HOLE => 4 bits
 //        };
 //      };
 //      uint16_t _GE4WGOBQGM; // size=2, offset=50
@@ -190,6 +192,7 @@ int t(_GE3GGYRZG4 m) {
 //  };
 //  uint16_t      _ME3WCODGHE;    // size=2, offset=56
 //  uint16_t      _MRRTANDGGV;    // size=2, offset=58
+//  // HOLE => 4 bytes
 //  _GE2WIMZYME * pool;           // size=8, offset=64
 //  ZeroMarker    _HBTGKNJYGM;    // size=0, offset=72
 //  _GE3GGYRZG4 * _MU4TMZTEGQ;    // size=8, offset=72
@@ -202,6 +205,7 @@ int t(_GE3GGYRZG4 m) {
 //      uint64_t _MFSDMOLGMV:16; // size=8, offset=80:24
 //      uint64_t _GM2TSNLCGF:9;  // size=8, offset=80:40
 //      uint64_t _MEYGMY3GG5:7;  // size=8, offset=80:49
+//      // HOLE => 1 bytes
 //    };
 //  };
 //  _HAYWENBZMI * shinfo;         // size=8, offset=88

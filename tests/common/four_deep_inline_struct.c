@@ -28,6 +28,7 @@ int t(struct s s) {
 //    struct { // size=24
 //      char f5; // size=1, offset=24
 //      char f6; // size=1, offset=25
+//      // HOLE => 6 bytes
 //      struct { // size=16
 //        void *f7; // size=8, offset=32
 //        char *f8; // size=8, offset=40

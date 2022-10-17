@@ -33,7 +33,9 @@ int t(struct first s) {
 //    void *bbb; // size=8, offset=24
 //  };
 //  char  arrays[5]; // size=5, offset=32
+//  // HOLE => 3 bytes
 //  float vvvs[5];   // size=20, offset=40
+//  // HOLE => 4 bytes
 //  struct { // size=16
 //    first *next; // size=8, offset=64
 //    first *prev; // size=8, offset=72

@@ -15,6 +15,7 @@ int t(struct s s) {
 
 //struct s { // size=64
 //  int         f1;   // size=4, offset=0
+//  // HOLE => 4 bytes
 //  void *      ptr1; // size=8, offset=8
 //  void **     ptr2; // size=8, offset=16
 //  void ***    ptr3; // size=8, offset=24

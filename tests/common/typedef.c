@@ -9,9 +9,11 @@ int t(typedefed s) {
 
 //struct before_name { // size=16
 //  int   field1; // size=4, offset=0
+//  // HOLE => 4 bytes
 //  char *field2; // size=8, offset=8
 //};
 //struct typedefed { // size=16
 //  int   field1; // size=4, offset=0
+//  // HOLE => 4 bytes
 //  char *field2; // size=8, offset=8
 //};

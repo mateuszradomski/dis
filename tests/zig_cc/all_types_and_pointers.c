@@ -67,6 +67,7 @@ int t(struct all_types_and_ptrs_structure s) {
 //  char                field1;      // size=1, offset=0
 //  signed char         field2;      // size=1, offset=1
 //  unsigned char       field3;      // size=1, offset=2
+//  // HOLE => 1 bytes
 //  short               field4;      // size=2, offset=4
 //  short               field5;      // size=2, offset=6
 //  short               field6;      // size=2, offset=8
@@ -78,6 +79,7 @@ int t(struct all_types_and_ptrs_structure s) {
 //  int                 field12;     // size=4, offset=24
 //  unsigned int        field13;     // size=4, offset=28
 //  unsigned int        field14;     // size=4, offset=32
+//  // HOLE => 4 bytes
 //  long                field15;     // size=8, offset=40
 //  long                field16;     // size=8, offset=48
 //  long                field17;     // size=8, offset=56
@@ -91,7 +93,9 @@ int t(struct all_types_and_ptrs_structure s) {
 //  unsigned long long  field25;     // size=8, offset=120
 //  unsigned long long  field26;     // size=8, offset=128
 //  float               field27;     // size=4, offset=136
+//  // HOLE => 4 bytes
 //  double              field28;     // size=8, offset=144
+//  // HOLE => 8 bytes
 //  long double         field29;     // size=16, offset=160
 //  char *              field1_ptr;  // size=8, offset=176
 //  signed char *       field2_ptr;  // size=8, offset=184
@@ -122,4 +126,5 @@ int t(struct all_types_and_ptrs_structure s) {
 //  float *             field27_ptr; // size=8, offset=384
 //  double *            field28_ptr; // size=8, offset=392
 //  long double *       field29_ptr; // size=8, offset=400
+//  // HOLE => 8 bytes
 //};

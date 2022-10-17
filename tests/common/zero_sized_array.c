@@ -17,6 +17,7 @@ int t(struct zero_sized s) {
 //struct zero_sized { // size=8
 //  int          count;             // size=4, offset=0
 //  float        dynamic_levels[0]; // size=0, offset=4
+//  // HOLE => 4 bytes
 //  ZeroMarker   z1;                // size=0, offset=8
 //  ZeroMarker64 z2;                // size=0, offset=8
 //};

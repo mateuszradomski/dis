@@ -429,17 +429,20 @@ const Context = struct {
                                     attr.form,
                                     child_die.attr_range.start + attr_idx,
                                 )),
-                                .bit_offset => member.bit_loc = @intCast(u16, try c.dwarf.readFormData(
-                                    attr.form,
-                                    child_die.attr_range.start + attr_idx,
-                                )),
+                                .bit_offset => {
+                                    // TODO(radomski): bit_size might not be read at this point
+                                    const form_data = @intCast(u16, try c.dwarf.readFormData(attr.form, child_die.attr_range.start + attr_idx));
+                                    const type_bit_size = c.types.items[member.type_id].size * 8;
+                                    member.bit_loc = @intCast(u16, type_bit_size - (member.bit_size + form_data));
+                                },
                                 .data_bit_offset => {
                                     // TODO(radomski): bit_size might not be read at this point
                                     const form_data = try c.dwarf.readFormData(attr.form, child_die.attr_range.start + attr_idx);
                                     const type_bit_size = c.types.items[member.type_id].size * 8;
                                     const value = @intCast(u32, form_data % type_bit_size);
                                     member.mem_loc += @intCast(u32, form_data) / type_bit_size;
-                                    member.bit_loc = @intCast(u16, (type_bit_size) - value - member.bit_size);
+                                    const bit_loc = @intCast(u16, (type_bit_size) - value - member.bit_size);
+                                    member.bit_loc = @intCast(u16, type_bit_size - (member.bit_size + bit_loc));
                                 },
                                 .bit_size => member.bit_size = @intCast(u16, try c.dwarf.readFormData(
                                     attr.form,
@@ -716,7 +719,18 @@ const Context = struct {
 
             try stdout.print("{s} {{ // size={}\n", .{ stype.name, stype.size });
         }
+        var current_offset: u32 = 0;
         for (members) |member| {
+            if (stype.struct_type != .union_type and current_offset != member.mem_loc * 8 + member.bit_loc) {
+                try stdout.print("{s: >[2]}// HOLE => {d} bytes\n", .{
+                    "",
+                    ((member.mem_loc * 8 + member.bit_loc) - current_offset) / 8,
+                    left_pad + 2,
+                });
+
+                current_offset = member.mem_loc * 8 + member.bit_loc;
+            }
+
             const mtype = c.types.items[member.type_id];
             if (s.inline_structures.contains(mtype.struct_id) or (mtype.name.len == 0 and mtype.struct_type != .none)) {
                 try c.printStructImpl(
@@ -727,6 +741,7 @@ const Context = struct {
                     member.mem_loc + mem_offset,
                     member.name,
                 );
+                current_offset += mtype.size * 8;
                 continue;
             }
 
@@ -748,6 +763,7 @@ const Context = struct {
             }
             const mem_loc = mem_offset + member.mem_loc;
             if (member.bit_size == 0) {
+                current_offset += size * 8;
                 try stdout.print(";{s: <[3]} // size={}, offset={}\n", .{
                     "",
                     size,
@@ -755,17 +771,34 @@ const Context = struct {
                     member_name_pad - written,
                 });
             } else {
+                current_offset += member.bit_size;
                 written += fmt.count(":{d}", .{member.bit_size});
                 try stdout.print(":{};{s: <[5]} // size={}, offset={}:{}\n", .{
                     member.bit_size,
                     "",
                     size,
                     mem_loc,
-                    (size * 8) - (member.bit_size + member.bit_loc),
+                    member.bit_loc,
                     member_name_pad - written,
                 });
             }
         }
+
+        if (stype.struct_type != .union_type and current_offset != stype.size * 8) {
+            const alinging_bits_count = (stype.size * 8);
+            const whole_padding_bits = alinging_bits_count - current_offset;
+            const padding_bits = @truncate(u3, whole_padding_bits);
+            const padding_bytes = whole_padding_bits / 8;
+
+            if (padding_bits != 0 and padding_bytes != 0) {
+                try stdout.print("{s: >[3]}// HOLE => {d} bytes and {d} bits\n", .{ "", padding_bytes, padding_bits, left_pad + 2 });
+            } else if (padding_bits != 0 and padding_bytes == 0) {
+                try stdout.print("{s: >[2]}// HOLE => {d} bits\n", .{ "", padding_bits, left_pad + 2 });
+            } else if (padding_bits == 0 and padding_bytes != 0) {
+                try stdout.print("{s: >[2]}// HOLE => {d} bytes\n", .{ "", padding_bytes, left_pad + 2 });
+            }
+        }
+
         if (member_name.len > 0) {
             try stdout.print("{s: <[2]}}} {s};\n", .{ "", member_name, left_pad });
         } else {

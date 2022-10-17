@@ -9,5 +9,6 @@ int t(typedefed s) {
 
 //struct typedefed { // size=16
 //  int   field1; // size=4, offset=0
+//  // HOLE => 4 bytes
 //  char *field2; // size=8, offset=8
 //};

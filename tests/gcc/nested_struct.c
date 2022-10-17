@@ -15,6 +15,7 @@ int t(struct outer_struct s) {
 //struct inner_struct { // size=8
 //  int  inner_field1; // size=4, offset=0
 //  char inner_field2; // size=1, offset=4
+//  // HOLE => 3 bytes
 //};
 //struct outer_struct { // size=12
 //  inner_struct field_ins1; // size=8, offset=0

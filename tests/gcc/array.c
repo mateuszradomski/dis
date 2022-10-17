@@ -15,5 +15,6 @@ int t(struct array s) {
 //  short int field2[7];   // size=14, offset=16
 //  char      field3[123]; // size=123, offset=30
 //  char      field4[8];   // size=8, offset=153
+//  // HOLE => 3 bytes
 //  float     field5[360]; // size=1440, offset=164
 //};
