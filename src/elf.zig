@@ -121,6 +121,7 @@ const ELFRelocationA = struct {
 };
 
 const ELFDebugSections = struct {
+    binary_bitness: u8,
     debug_abbrev: Buffer,
     debug_info: Buffer,
     debug_str: Buffer,
@@ -245,6 +246,7 @@ pub fn readElfGeneric(comptime T: type, buffer: *Buffer, arena: mem.Allocator) !
     }
 
     return ELFDebugSections{
+        .binary_bitness = @sizeOf(T),
         .debug_abbrev = debug_abbrev,
         .debug_info = debug_info,
         .debug_str = debug_str,

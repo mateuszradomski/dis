@@ -322,6 +322,8 @@ dies: std.ArrayList(Die),
 cus: std.ArrayList(CompilationUnit),
 current_cu: CompilationUnit,
 
+binary_bitness: u8,
+
 debug_info: Buffer,
 debug_str: Buffer,
 debug_str_offsets: Buffer,
@@ -329,7 +331,14 @@ debug_str_offsets: Buffer,
 debug_info_address_stack: [64]usize,
 debug_info_address_stack_top: u32,
 
-pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_str_offsets: Buffer, allocator: std.mem.Allocator) !Self {
+pub fn init(
+    binary_bitness: u8,
+    debug_abbrev: *Buffer,
+    debug_info: Buffer,
+    debug_str: Buffer,
+    debug_str_offsets: Buffer,
+    allocator: std.mem.Allocator,
+) !Self {
     var d = Self{
         .dies = std.ArrayList(Die).init(allocator),
         .attrs = std.ArrayList(Attr).init(allocator),
@@ -337,6 +346,7 @@ pub fn init(debug_abbrev: *Buffer, debug_info: Buffer, debug_str: Buffer, debug_
         .attr_skips = std.ArrayList(AttrSkip).init(allocator),
         .cus = std.ArrayList(CompilationUnit).init(allocator),
         .current_cu = undefined,
+        .binary_bitness = binary_bitness,
 
         .debug_info = debug_info,
         .debug_str = debug_str,
@@ -599,6 +609,10 @@ pub fn setCu(self: *Self, cu: CompilationUnit) void {
 
 pub fn inCurrentCu(self: *Self) bool {
     return self.debug_info.curr_pos < (self.current_cu.offset + self.current_cu.payload_size);
+}
+
+pub fn getPointerSize(self: *Self) u8 {
+    return self.binary_bitness;
 }
 
 pub fn getAttrs(self: *Self, range: AttrRange) []Attr {

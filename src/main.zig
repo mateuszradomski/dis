@@ -355,7 +355,7 @@ const Context = struct {
         const die_id = try c.dwarf.readDieIdAtAddress(global_die_address) orelse unreachable;
         const die = c.dwarf.dies.items[die_id];
         const name = blk: {
-            var name: []const u8 = undefined;
+            var name: []const u8 = "";
 
             for (c.dwarf.getAttrs(die.attr_range)) |attr, attr_idx| {
                 switch (attr.at) {
@@ -413,6 +413,7 @@ const Context = struct {
 
                 switch (child_die.tag) {
                     Dwarf.DW_TAG.member => {
+                        var add_this_member = true;
                         var member = mem.zeroes(StructMember);
                         for (c.dwarf.getAttrs(child_die.attr_range)) |attr, attr_idx| {
                             switch (attr.at) {
@@ -449,11 +450,18 @@ const Context = struct {
                                     child_die.attr_range.start + attr_idx,
                                 )),
                                 .name => member.name = try c.dwarf.readString(attr.form, child_die.attr_range.start + attr_idx),
+                                .external => {
+                                    // NOTE(radomski): always assume that it is external
+                                    c.dwarf.skipFormData(attr.form);
+                                    add_this_member = false;
+                                },
                                 else => c.dwarf.skipFormData(attr.form),
                             }
                         }
 
-                        c.member_scratch_stack.push(member);
+                        if (add_this_member) {
+                            c.member_scratch_stack.push(member);
+                        }
                     },
                     .structure_type => {
                         const s = try c.parseStructureImpl(child_global_die_address, child_die_id);
@@ -552,11 +560,13 @@ const Context = struct {
         var dimension: u32 = std.math.maxInt(u32);
         if (die.tag == Dwarf.DW_TAG.array_type) {
             dimension = 1;
+            var defines_count = false;
             std.debug.assert(die.has_children);
             while (c.dwarf.readDieIfTag(Dwarf.DW_TAG.subrange_type)) |child_die| {
                 for (c.dwarf.getAttrs(child_die.attr_range)) |child_attr, child_attr_idx| {
                     switch (child_attr.at) {
                         .upper_bound, .count => {
+                            defines_count = true;
                             const offset: u8 = if (child_attr.at == .upper_bound) 1 else 0;
                             const array_dim = @intCast(u64, try c.dwarf.readFormData(child_attr.form, child_die.attr_range.start + child_attr_idx)) +% offset;
                             dimension *= @truncate(u32, array_dim);
@@ -567,11 +577,14 @@ const Context = struct {
                     }
                 }
             }
+            if (!defines_count) {
+                dimension = 0;
+            }
         }
 
         var ptr_count: u8 = 0;
         if (die.tag == Dwarf.DW_TAG.pointer_type) {
-            size = 8;
+            size = c.dwarf.getPointerSize();
             ptr_count = 1;
             if (inner_type_id) |inner_id| {
                 if (name == null) {
@@ -712,7 +725,7 @@ const Context = struct {
                 if (ns.struct_range.start > sid) {
                     break;
                 }
-                if (ns.struct_range.contains(sid)) {
+                if (ns.struct_range.contains(sid) and ns.name.len > 0) {
                     try stdout.print("{s}::", .{ns.name});
                 }
             }
@@ -817,7 +830,7 @@ const Context = struct {
 
     pub fn printContainers(c: *Context) !void {
         const stdout_file = std.io.getStdOut().writer();
-        var bw = std.io.BufferedWriter(MegaByte, @TypeOf(stdout_file)){ .unbuffered_writer = stdout_file };
+        var bw = std.io.BufferedWriter(16 * KiloByte, @TypeOf(stdout_file)){ .unbuffered_writer = stdout_file };
         const stdout = bw.writer();
 
         for (c.structures.items) |s, sid| {
@@ -853,6 +866,7 @@ pub fn main() !void {
 
     var timer = try std.time.Timer.start();
     var dwarf = try Dwarf.init(
+        sections.binary_bitness,
         &sections.debug_abbrev,
         sections.debug_info,
         sections.debug_str,
