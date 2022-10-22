@@ -337,9 +337,11 @@ const Context = struct {
                     var namespace = try c.readNamespace(global_die_address);
                     if (die.has_children) {
                         try c.readChildren();
+                        namespace.struct_range.end = @intCast(u32, c.structures.items.len);
+                        if (namespace.struct_range.len() > 0) {
+                            try c.namespaces.append(c.arena, namespace);
+                        }
                     }
-                    namespace.struct_range.end = @intCast(u32, c.structures.items.len);
-                    try c.namespaces.append(c.arena, namespace);
                 },
                 Dwarf.DW_TAG.compile_unit => {
                     c.dwarf.skipDieAttrs(die_id);
@@ -682,12 +684,12 @@ const Context = struct {
 
     pub fn printStructImpl(
         c: *Context,
-        sid: StructId,
         s: Structure,
         stdout: anytype,
         left_pad: usize,
         mem_offset: usize,
         member_name: []const u8,
+        active_namespaces: []Namespace,
     ) !void {
         const members = c.members.items[s.member_range.start..s.member_range.end];
 
@@ -721,11 +723,9 @@ const Context = struct {
             try stdout.print("{s: >[2]} {{ // size={}\n", .{ container_prefix, stype.size, left_pad + container_prefix.len });
         } else {
             try stdout.print("{s: >[1]} ", .{ container_prefix, left_pad + container_prefix.len });
-            for (c.namespaces.items) |ns| {
-                if (ns.struct_range.start > sid) {
-                    break;
-                }
-                if (ns.struct_range.contains(sid) and ns.name.len > 0) {
+
+            for (active_namespaces) |ns| {
+                if (ns.name.len > 0) {
                     try stdout.print("{s}::", .{ns.name});
                 }
             }
@@ -747,12 +747,12 @@ const Context = struct {
             const mtype = c.types.items[member.type_id];
             if (s.inline_structures.contains(mtype.struct_id) or (mtype.name.len == 0 and mtype.struct_type != .none)) {
                 try c.printStructImpl(
-                    mtype.struct_id,
                     c.structures.items[mtype.struct_id],
                     stdout,
                     left_pad + 2,
                     member.mem_loc + mem_offset,
                     member.name,
+                    &[_]Namespace{},
                 );
                 current_offset += mtype.size * 8;
                 continue;
@@ -821,11 +821,11 @@ const Context = struct {
 
     pub fn printStruct(
         c: *Context,
-        sid: StructId,
         s: Structure,
         stdout: anytype,
+        active_namespaces: []Namespace,
     ) !void {
-        try c.printStructImpl(sid, s, stdout, 0, 0, "");
+        try c.printStructImpl(s, stdout, 0, 0, "", active_namespaces);
     }
 
     pub fn printContainers(c: *Context) !void {
@@ -833,10 +833,38 @@ const Context = struct {
         var bw = std.io.BufferedWriter(16 * KiloByte, @TypeOf(stdout_file)){ .unbuffered_writer = stdout_file };
         const stdout = bw.writer();
 
+        var active_namespaces_stack = try std.ArrayListUnmanaged(Namespace).initCapacity(c.arena, 64);
+        var next_namespace_index: usize = 0;
+
         for (c.structures.items) |s, sid| {
+            while (true) {
+                const last_opt = active_namespaces_stack.popOrNull();
+                if (last_opt) |last| {
+                    if (last.struct_range.contains(@intCast(u32, sid))) {
+                        active_namespaces_stack.appendAssumeCapacity(last);
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            while (true) {
+                if (next_namespace_index >= c.namespaces.items.len) {
+                    break;
+                }
+                const ns = c.namespaces.items[next_namespace_index];
+                if (ns.struct_range.contains(@intCast(u32, sid))) {
+                    active_namespaces_stack.appendAssumeCapacity(ns);
+                    next_namespace_index += 1;
+                } else {
+                    break;
+                }
+            }
+
             const stype = c.types.items[s.type_id];
             if (stype.size > 0 and stype.name.len > 0) {
-                try c.printStruct(@intCast(u32, sid), s, stdout);
+                try c.printStruct(s, stdout, active_namespaces_stack.items);
             }
         }
 
